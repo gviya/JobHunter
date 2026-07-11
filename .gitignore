@@ -1,0 +1,40 @@
+# ------------------------------------------------------------------
+# .gitignore para soluciones .NET
+# Ignora artefactos de compilación, archivos de IDE y secretos locales.
+# ------------------------------------------------------------------
+
+# Artefactos de compilación
+**/bin/
+**/obj/
+**/out/
+*.user
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Resultados de tests y cobertura
+TestResults/
+coverage*.xml
+coverage*.json
+coverage*.info
+*.trx
+
+# Secretos y configuración local (NUNCA subir credenciales al repositorio)
+.env
+appsettings.Local.json
+*.pfx
+
+# Logs generados por Serilog en local
+logs/
+*.log
+
+# NuGet
+*.nupkg
+packages/
+
+# Docker
+docker/volumes/
