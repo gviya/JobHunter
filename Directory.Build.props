@@ -1,0 +1,45 @@
+<!--
+  ==================================================================
+  Directory.Build.props — Propiedades COMUNES a todos los proyectos.
+
+  ¿QUÉ ES?
+  MSBuild importa automáticamente este archivo en cada .csproj que
+  esté por debajo de esta carpeta. Así evitamos repetir las mismas
+  propiedades (TargetFramework, Nullable...) en cada proyecto.
+
+  ¿POR QUÉ EXISTE?
+  - Un único lugar donde cambiar la versión de .NET de toda la solución.
+  - Garantiza que TODOS los proyectos comparten la misma configuración
+    de calidad (nullable reference types, warnings, etc.).
+  ==================================================================
+-->
+<Project>
+
+  <PropertyGroup>
+    <!-- Framework único para toda la solución: .NET 10 (LTS) -->
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- Usings implícitos: System, System.Linq, etc. sin escribirlos -->
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Nullable reference types: el compilador avisa de posibles null -->
+    <Nullable>enable</Nullable>
+
+    <!-- Idioma de los mensajes de análisis de código -->
+    <AnalysisLevel>latest</AnalysisLevel>
+
+    <!-- Central Package Management: las versiones de NuGet viven en
+         Directory.Packages.props, no en cada .csproj -->
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SUPRESIÓN JUSTIFICADA de auditoría NuGet (documentar siempre el porqué):
+         El aviso GHSA-rvv3-g6hj-g44x de AutoMapper solo está parcheado en la
+         v15+, que es de licencia COMERCIAL. Esta plantilla se queda en la
+         v14 (última MIT); el vector del aviso no aplica a este uso
+         (configuración de mapeos estática, sin entrada de usuario). -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
+  </ItemGroup>
+
+</Project>

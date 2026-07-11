@@ -1,0 +1,42 @@
+<!--
+  ==================================================================
+  RenewableEnergy.Application — Los CASOS DE USO de la aplicación.
+
+  ¿QUÉ VIVE AQUÍ?
+  Commands, Queries, Handlers, Validators, DTOs/ViewModels y las
+  INTERFACES de servicios externos (email, usuario actual, eventos).
+
+  DEPENDENCIAS PERMITIDAS: Domain y librerías de orquestación
+  (MediatR, FluentValidation, AutoMapper) + ABSTRACCIONES de Microsoft.
+  PROHIBIDO: EF Core, MassTransit, Redis... (eso es Infrastructure).
+  Los tests de arquitectura verifican esta regla automáticamente.
+  ==================================================================
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\RenewableEnergy.Domain\RenewableEnergy.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- CQRS: mediador que conecta Controller -> Handler -->
+    <PackageReference Include="MediatR" />
+    <!-- Validación declarativa de Commands/Queries -->
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+    <!-- Mapeo Entity -> ViewModel. Desde la v13, AddAutoMapper() está
+         integrado en el paquete principal (el antiguo paquete
+         AutoMapper.Extensions.Microsoft.DependencyInjection ya no existe) -->
+    <PackageReference Include="AutoMapper" />
+    <!-- Solo ABSTRACCIONES (interfaces), nunca implementaciones -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Los tests unitarios pueden ver los handlers internal -->
+    <InternalsVisibleTo Include="RenewableEnergy.Application.Tests" />
+  </ItemGroup>
+
+</Project>

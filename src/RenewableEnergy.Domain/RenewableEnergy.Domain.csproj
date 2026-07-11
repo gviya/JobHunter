@@ -1,0 +1,22 @@
+<!--
+  ==================================================================
+  RenewableEnergy.Domain — El CORAZÓN de la aplicación.
+
+  REGLA DE ORO de Clean Architecture: esta capa NO depende de nadie.
+  Ni de EF Core, ni de ASP.NET, ni de Application ni de Infrastructure.
+
+  La única excepción tolerada es MediatR.Contracts: un paquete de SOLO
+  interfaces (INotification) que permite que los eventos de dominio
+  sean publicables sin acoplar el dominio a ninguna infraestructura.
+
+  Fíjate: los PackageReference NO llevan Version. Las versiones viven
+  centralizadas en Directory.Packages.props (Central Package Management).
+  ==================================================================
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="MediatR.Contracts" />
+  </ItemGroup>
+
+</Project>

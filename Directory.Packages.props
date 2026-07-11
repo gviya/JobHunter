@@ -1,0 +1,130 @@
+<!--
+  ==================================================================
+  Directory.Packages.props — Central Package Management (CPM).
+
+  ¿QUÉ ES?
+  El catálogo ÚNICO de versiones NuGet de toda la solución. Los .csproj
+  solo declaran <PackageReference Include="X" /> SIN atributo Version:
+  la versión se resuelve desde este archivo.
+
+  ¿POR QUÉ EXISTE?
+  - Evita el "version drift": dos proyectos usando versiones distintas
+    del mismo paquete (fuente clásica de errores en runtime).
+  - Actualizar una librería = tocar UNA línea.
+  - Es lo que piden los equipos enterprise: gobernanza de dependencias.
+
+  NOTA SOBRE LICENCIAS (importante para entrevistas):
+  MediatR (v13+), AutoMapper (v15+) y MassTransit (v9+) pasaron a
+  licencia comercial en 2025. Esta plantilla fija las ÚLTIMAS VERSIONES
+  OPEN SOURCE de cada una — decisión consciente y defendible.
+  ==================================================================
+-->
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup Label="Domain">
+    <!-- Contratos mínimos de MediatR (INotification). Es el ÚNICO paquete
+         permitido en Domain: no arrastra infraestructura, solo interfaces -->
+    <PackageVersion Include="MediatR.Contracts" Version="2.0.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="Application">
+    <!-- CQRS. 12.5.0 = última versión con licencia Apache 2.0 (v13+ es comercial) -->
+    <PackageVersion Include="MediatR" Version="12.5.0" />
+    <!-- Validación declarativa de Commands/Queries -->
+    <PackageVersion Include="FluentValidation" Version="12.1.1" />
+    <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+    <!-- Mapeo Entity -> DTO. 14.0.0 = última versión MIT (v15+ es comercial).
+         Desde la v13 el paquete de DI está integrado: AddAutoMapper() vive aquí -->
+    <PackageVersion Include="AutoMapper" Version="14.0.0" />
+    <!-- Abstracciones de Microsoft (NO implementaciones) -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.Abstractions" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup Label="Infrastructure - Persistencia">
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.9" />
+    <!-- Alternativa PostgreSQL (ver docs/SETUP.md para cambiar de proveedor) -->
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.9" />
+    <!-- Serialización de eventos de dominio en la tabla Outbox (TypeNameHandling) -->
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup Label="Infrastructure - Messaging">
+    <!-- 8.5.10 = última versión Apache 2.0 de MassTransit (v9 es comercial) -->
+    <PackageVersion Include="MassTransit" Version="8.5.10" />
+    <PackageVersion Include="MassTransit.RabbitMQ" Version="8.5.10" />
+    <!-- Alternativa Azure Service Bus para producción (mismo código MassTransit) -->
+    <PackageVersion Include="MassTransit.Azure.ServiceBus.Core" Version="8.5.10" />
+  </ItemGroup>
+
+  <ItemGroup Label="Infrastructure - Caching">
+    <PackageVersion Include="StackExchange.Redis" Version="3.0.17" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup Label="Infrastructure - Resiliencia">
+    <!-- Retry, Circuit Breaker, Timeout... -->
+    <PackageVersion Include="Polly" Version="8.7.0" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Polly" Version="10.0.9" />
+  </ItemGroup>
+
+  <ItemGroup Label="Infrastructure - Azure">
+    <!-- Cargar secretos desde Azure Key Vault en producción -->
+    <PackageVersion Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.5.1" />
+    <PackageVersion Include="Azure.Security.KeyVault.Secrets" Version="4.11.0" />
+    <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="API">
+    <!-- Swagger UI + generación OpenAPI. Se fija la 7.x porque usa el modelo
+         clásico de Microsoft.OpenApi 1.x (las 9.x/10.x cambiaron el modelo
+         de documento y el API de configuración) -->
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+    <!-- Versionado de API: /api/v1/..., /api/v2/... -->
+    <PackageVersion Include="Asp.Versioning.Mvc" Version="10.0.0" />
+    <PackageVersion Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.9" />
+    <!-- Emisión de JWT desde Infrastructure/Identity -->
+    <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.19.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="Logging y Observabilidad">
+    <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
+    <!-- Seq: visualizador de logs estructurados (docker-compose lo incluye) -->
+    <PackageVersion Include="Serilog.Sinks.Seq" Version="9.1.0" />
+    <PackageVersion Include="Serilog.Sinks.ApplicationInsights" Version="5.0.1" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.16.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Tests">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <!-- Assertions fluidas (fork open-source de FluentAssertions) -->
+    <PackageVersion Include="AwesomeAssertions" Version="9.4.0" />
+    <PackageVersion Include="Moq" Version="4.20.72" />
+    <!-- SQL Server REAL en Docker para tests de integración -->
+    <PackageVersion Include="Testcontainers.MsSql" Version="4.13.0" />
+    <!-- WebApplicationFactory: levanta la API en memoria para tests E2E -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.9" />
+    <!-- Tests de arquitectura: verifica dependencias entre capas -->
+    <PackageVersion Include="TngTech.ArchUnitNET.xUnit" Version="0.13.3" />
+    <!-- SQLite en memoria: BD relacional ligera para los tests de API -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+  </ItemGroup>
+
+</Project>
