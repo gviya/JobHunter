@@ -46,6 +46,7 @@ Guía completa de instalación y problemas frecuentes: [`docs/SETUP.md`](docs/SE
 | La arquitectura y el flujo de un request | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | **Cómo añadir una feature paso a paso** ⭐ | [`docs/GUIA_NUEVAS_FEATURES.md`](docs/GUIA_NUEVAS_FEATURES.md) |
 | Cada patrón (CQRS, Outbox, Result, Specification...) | [`docs/PATRONES.md`](docs/PATRONES.md) |
+| **Testing desde cero** (nunca has escrito un test) | [`docs/GUIA_TESTING.md`](docs/GUIA_TESTING.md) |
 | Las reglas de código del proyecto | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) |
 | Los endpoints y sus códigos de error | [`docs/API.md`](docs/API.md) |
 | **Practicar con ejercicios guiados** (hay huecos dejados a propósito) | [`docs/EJERCICIOS.md`](docs/EJERCICIOS.md) |

@@ -10,6 +10,34 @@ La red de seguridad ya existe: si rompes una regla de capas, los tests de
 `ProyectoMappingProfileTests`. Trabaja en una rama (`git checkout -b ejercicio-1`)
 y compara con `main` al terminar.
 
+## 📖 Cómo trabajar cada ejercicio (el método)
+
+Los niveles tienen niveles de guía DISTINTOS, a propósito:
+
+- **Nivel 0** (testing desde cero): paso a paso completo, casi dictado —
+  porque nadie aprende a nadar leyendo pistas.
+- **Niveles 1–7**: enunciado + archivos a tocar + pistas, pero SIN la
+  solución. La incomodidad de no tener la receta es donde ocurre el
+  aprendizaje. No es que falte la guía: la guía genérica ya existe
+  (`GUIA_NUEVAS_FEATURES.md` para features, `GUIA_TESTING.md` para tests) y
+  el repo está lleno de código análogo que copiar-adaptando.
+
+Cuando te atasques (te pasará; es la señal de que el ejercicio vale), escala
+en este orden — cada peldaño es más "caro" que el anterior:
+
+1. **Relee el doc del tema** (la tabla del mapa de abajo te dice cuál) — 5 min.
+2. **Busca el código análogo**: casi todo ejercicio tiene un "hermano" ya
+   implementado (¿endpoint de instalaciones? mira el de mediciones; ¿un
+   behavior? mira los tres que hay). Copiar-adaptando NO es hacer trampa: es
+   como se trabaja de verdad.
+3. **Timebox**: si tras 45–60 min sigues sin avanzar NADA, pide ayuda — a tu
+   asistente de IA, pero con una regla: pídele PISTAS o que te revise lo que
+   llevas, no la solución entera ("¿por qué no compila esto?" enseña;
+   "hazme el ejercicio 2.1" no).
+4. Al terminar, **pide una revisión de código** de tu rama: `git diff main`
+   y que te señale qué habría hecho distinto y por qué. Ahí se aprende lo
+   que ningún enunciado cuenta.
+
 ---
 
 ## 🗺️ Mapa de cobertura: qué se aprende con qué
@@ -20,6 +48,7 @@ en la plantilla tiene al menos un ejercicio.
 
 | Área | Se aprende en |
 |---|---|
+| **Escribir tests desde cero (xUnit, AwesomeAssertions, Moq)** | 0.1–0.4 + `GUIA_TESTING.md` |
 | Agregados, invariantes, eventos de dominio | 1.1, 1.3, 2.1 |
 | Value Objects | 1.2, 2.1 (PotenciaKW en el DTO) |
 | Specification pattern | 1.2, 3.1 |
@@ -52,6 +81,109 @@ en la plantilla tiene al menos un ejercicio.
 > Lo ÚNICO que no se puede practicar 100 % en local es el despliegue real en
 > Azure (App Service + Key Vault): requiere una cuenta (hay capa gratuita).
 > Está descrito como ejercicio opcional al final del nivel 7.
+
+---
+
+## Nivel 0 — Tus primeros tests (guiado paso a paso)
+
+*Si nunca has escrito un test, este nivel es para ti. Lee ANTES
+`docs/GUIA_TESTING.md` (15 min) y vuelve aquí. A diferencia del resto de
+niveles, aquí las instrucciones son completas: el objetivo es que teclees,
+ejecutes y VEAS, no que descubras.*
+
+### 0.1 Ejecuta, filtra y rompe (sin escribir código aún)
+
+1. Ejecuta toda la suite y lee el resumen final:
+   ```bash
+   dotnet test
+   ```
+2. Ejecuta UN solo test y mira su salida:
+   ```bash
+   dotnet test --filter "FullyQualifiedName~Activar_DesdeBorrador"
+   ```
+3. Ahora ROMPE algo: abre
+   `tests/RenewableEnergy.Domain.Tests/Entities/ProyectoRenovableTests.cs`,
+   busca `Activar_DesdeBorrador_...` y cambia
+   `Should().Be(EstadoProyecto.Activo)` por `EstadoProyecto.Pausado`. Ejecuta
+   el test y **lee el mensaje de fallo completo**: fíjate en que te dice qué
+   esperaba, qué encontró y en qué línea.
+4. Deshaz el cambio (`git checkout -- tests/`) y comprueba que vuelve el verde.
+5. Bonus IDE: pon un breakpoint DENTRO del test, ejecútalo en modo debug y
+   avanza con F10 viendo cómo se ejecuta `Activar()` por dentro.
+
+*Has aprendido:* el ciclo rojo/verde, leer fallos, depurar a través de un test.
+
+### 0.2 Tu primer [Fact]: probar Cancelar()
+
+La entidad tiene `Cancelar()` y NADIE lo prueba desde Borrador. Escríbelo tú:
+
+1. Abre `ProyectoRenovableTests.cs` y añade al final de la clase:
+   ```csharp
+   [Fact]
+   public void Cancelar_DesdeBorrador_DeberiaCambiarACancelado()
+   {
+       // Arrange: usa el helper que ya existe en esta clase
+       var proyecto = CrearProyectoValido();
+
+       // Act
+       proyecto.Cancelar();
+
+       // Assert: completa TÚ las dos aserciones:
+       // 1) el Estado debe ser EstadoProyecto.Cancelado
+       // 2) PuedeSerEliminado debe ser true
+   }
+   ```
+2. Completa los asserts (sintaxis: `algo.Should().Be(valor)` /
+   `algo.Should().BeTrue()` — tienes 30 ejemplos alrededor).
+3. `dotnet test --filter "FullyQualifiedName~Cancelar_DesdeBorrador"` → verde.
+4. **Míralo fallar** (paso clave): en `ProyectoRenovable.Cancelar()` comenta
+   la línea `Estado = EstadoProyecto.Cancelado;`, ejecuta, lee el rojo,
+   descomenta.
+5. Escribe el segundo escenario tú solo, copiando el patrón de
+   `Activar_CuandoYaEstaActivo_...`:
+   `Cancelar_CuandoYaEstaCancelado_DeberiaLanzarDomainException`.
+
+*Has aprendido:* AAA, aserciones, ver el test proteger el código de verdad.
+
+### 0.3 Tu primera [Theory]: más formatos de email inválidos
+
+1. Abre `tests/RenewableEnergy.Domain.Tests/ValueObjects/EmailTests.cs` y
+   estudia 2 minutos cómo un solo método se ejecuta 4 veces con `[InlineData]`.
+2. Añade DOS casos inválidos nuevos que se te ocurran (¿espacios dentro?
+   ¿"@dominio.com" sin usuario?). Ejecuta: ¿pasan?
+3. Uno de estos dos NO lanzará excepción: `"usuario@dominio.c"` y
+   `"usuario @dominio.com"`. Averigua cuál probándolo, mira la regex de
+   `Email.cs` y entiende por qué. Decide: ¿es un bug o una decisión aceptable?
+   (No hay respuesta única — eso también es aprender a testear.)
+
+*Has aprendido:* Theory/InlineData y que los tests son una herramienta para
+INTERROGAR al código, no solo para vigilarlo.
+
+### 0.4 Tu primer mock: un caso que falta de verdad
+
+`ActualizarProyectoHandlerTests` cubre éxito, nombre duplicado y estado
+terminal... pero NO el caso "proyecto inexistente" (los demás handlers sí lo
+tienen). Complétalo:
+
+1. Abre `ActualizarProyectoHandlerTests.cs` y estudia el test
+   `Handle_ConProyectoInexistente_...` de `ActivarProyectoHandlerTests.cs`
+   (es tu plantilla exacta, está a un archivo de distancia).
+2. Escribe en `ActualizarProyectoHandlerTests`:
+   `Handle_ConProyectoInexistente_DeberiaDevolverNotFound`:
+   - Arrange: programa el mock para devolver null →
+     `.Setup(r => r.GetByIdAsync(...)).ReturnsAsync((ProyectoRenovable?)null);`
+   - Act: llama al handler con `CommandValido(Guid.NewGuid())`.
+   - Assert: `IsFailure` es true y `Error!.Tipo` es `ErrorType.NotFound`.
+   - Verify (el arte de los mocks): comprueba que `SaveChangesAsync` NO se
+     llamó — `Times.Never`.
+3. Verde. Acabas de cerrar un hueco REAL de la suite (mira la cobertura si
+   quieres: ese camino del handler estaba sin pisar).
+
+*Has aprendido:* Setup/Returns, verificar interacciones, y a leer tests
+vecinos como documentación.
+
+➡️ A partir de aquí ya sabes lo suficiente: cada ejercicio de los niveles
+1–7 te pedirá sus propios tests, y eso es práctica deliberada, no un extra.
 
 ---
 
