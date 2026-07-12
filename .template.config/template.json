@@ -1,14 +1,15 @@
 {
   "$schema": "http://json.schemastore.org/template",
   "author": "Juan Camba",
-  "classifications": ["Web", "Hexagonal", "API"],
-  "identity": "Api.Hexagonal.Template",
-  "name": "Api Hexagonal Template",
-  "shortName": "apihex",
+  "classifications": ["Web", "Clean Architecture", "API", "CQRS"],
+  "identity": "CleanArchitecture.RenewableEnergy.Template",
+  "name": "Plantilla Clean Architecture .NET (RenewableEnergy)",
+  "shortName": "cleanarch",
+  "description": "Plantilla educativa de Clean Architecture: CQRS con MediatR, DDD táctico, Outbox, MassTransit, EF Core, tests en 4 niveles y DevOps completo. Documentada en español.",
   "tags": {
     "language": "C#",
     "type": "solution"
   },
-  "sourceName": "Arquetipo",
+  "sourceName": "RenewableEnergy",
   "preferNameDirectory": true
 }

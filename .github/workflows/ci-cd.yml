@@ -1,0 +1,145 @@
+# ==================================================================
+# ci-cd.yml — Pipeline de INTEGRACIÓN Y DESPLIEGUE CONTINUO.
+#
+# Flujo:
+#   push/PR ──▶ build-and-test (siempre)
+#                    │
+#                    ├──▶ code-quality (SonarCloud, si está configurado)
+#                    │
+#                    └──▶ docker-build (solo push a main) ──▶ GHCR
+#
+#   deploy-staging: MANUAL (workflow_dispatch) hacia Azure App Service.
+# ==================================================================
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  # Disparo MANUAL para el despliegue a staging.
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: "10.0.x"
+  # Nombre de la imagen en GitHub Container Registry.
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/renewable-energy-api
+
+jobs:
+
+  # ── JOB 1: COMPILAR Y TESTEAR ─────────────────────────────────────
+  build-and-test:
+    name: Build y tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restaurar dependencias
+        run: dotnet restore RenewableEnergy.sln
+
+      - name: Compilar (Release, sin warnings tolerados)
+        run: dotnet build RenewableEnergy.sln --no-restore -c Release -warnaserror
+
+      # El runner de GitHub TIENE Docker: aquí los tests de integración
+      # con Testcontainers SÍ se ejecutan (en local sin Docker se omiten).
+      - name: Ejecutar tests con cobertura
+        run: >
+          dotnet test RenewableEnergy.sln --no-build -c Release
+          --collect:"XPlat Code Coverage"
+          --results-directory ./coverage
+          --logger "trx;LogFileName=resultados.trx"
+
+      - name: Publicar informe de cobertura como artefacto
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cobertura
+          path: coverage/**/coverage.cobertura.xml
+
+  # ── JOB 2: CALIDAD DE CÓDIGO (SonarCloud) ─────────────────────────
+  # Requiere configurar en el repo:
+  #   - Secret  SONAR_TOKEN  (token de sonarcloud.io)
+  #   - Variable SONAR_ENABLED = "true"
+  code-quality:
+    name: Análisis SonarCloud
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: vars.SONAR_ENABLED == 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Sonar necesita el histórico para el análisis
+
+      - name: Instalar .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Instalar scanner de Sonar
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      - name: Análisis (begin → build → end)
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          dotnet sonarscanner begin \
+            /k:"${{ github.repository_owner }}_renewable-energy" \
+            /o:"${{ github.repository_owner }}" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.token="$SONAR_TOKEN"
+          dotnet build RenewableEnergy.sln -c Release
+          dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+  # ── JOB 3: IMAGEN DOCKER → GITHUB CONTAINER REGISTRY ──────────────
+  docker-build:
+    name: Build y push de imagen Docker
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    # Solo al hacer push a main (no en PRs ni en develop).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write   # necesario para subir a GHCR
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # token automático del workflow
+
+      - name: Build y push (tags: latest + SHA del commit)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  # ── JOB 4: DESPLIEGUE A STAGING (manual) ──────────────────────────
+  # Se lanza desde la pestaña Actions → "Run workflow".
+  # Requiere el secret AZURE_WEBAPP_PUBLISH_PROFILE (perfil de publicación
+  # del App Service, descargable desde el portal de Azure).
+  deploy-staging:
+    name: Deploy a Azure App Service (staging)
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.event_name == 'workflow_dispatch'
+    environment: staging   # entorno de GitHub con aprobaciones/protecciones
+    steps:
+      - name: Desplegar contenedor en App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: renewable-energy-staging
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: ${{ env.IMAGE_NAME }}:latest

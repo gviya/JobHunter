@@ -1,0 +1,105 @@
+# ==================================================================
+# deployment.yaml — Despliegue de la API en Kubernetes.
+#
+# Un Deployment mantiene N réplicas del pod vivas y gestiona los
+# despliegues sin corte (rolling update). Cada campo está comentado.
+#
+# Los SECRETOS no van en este YAML: se crean aparte (una sola vez):
+#   kubectl create secret generic renewable-api-secrets \
+#     --from-literal=connection-string="Server=..." \
+#     --from-literal=jwt-secret="..." \
+#     --from-literal=api-key="..."
+# ==================================================================
+apiVersion: apps/v1          # grupo/versión de la API de k8s para Deployment
+kind: Deployment
+metadata:
+  name: renewable-api        # nombre del deployment dentro del namespace
+  labels:
+    app: renewable-api       # etiqueta que usan Service y monitorización
+spec:
+  replicas: 2                # nº de pods: 2+ para alta disponibilidad
+  selector:
+    matchLabels:
+      app: renewable-api     # qué pods gestiona este deployment (por label)
+  strategy:
+    type: RollingUpdate      # despliegue progresivo, sin downtime
+    rollingUpdate:
+      maxSurge: 1            # como mucho 1 pod extra durante el despliegue
+      maxUnavailable: 0      # nunca por debajo de las réplicas deseadas
+  template:                  # plantilla del POD que se replica
+    metadata:
+      labels:
+        app: renewable-api   # DEBE casar con el selector de arriba
+    spec:
+      containers:
+        - name: api
+          # La imagen la publica el pipeline de CI en GitHub Container Registry.
+          image: ghcr.io/TU_USUARIO/renewable-energy-api:latest
+          imagePullPolicy: Always   # siempre busca la última versión del tag
+
+          ports:
+            - containerPort: 8080   # puerto interno de Kestrel (ver Dockerfile)
+
+          env:
+            # Configuración NO sensible desde el ConfigMap...
+            - name: ASPNETCORE_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: renewable-api-config
+                  key: aspnetcore-environment
+            - name: Messaging__Enabled
+              valueFrom:
+                configMapKeyRef:
+                  name: renewable-api-config
+                  key: messaging-enabled
+            # ...y SECRETOS desde el Secret (nunca en el YAML del repo).
+            - name: ConnectionStrings__DefaultConnection
+              valueFrom:
+                secretKeyRef:
+                  name: renewable-api-secrets
+                  key: connection-string
+            - name: Jwt__Secret
+              valueFrom:
+                secretKeyRef:
+                  name: renewable-api-secrets
+                  key: jwt-secret
+            - name: ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: renewable-api-secrets
+                  key: api-key
+
+          # LIVENESS: "¿el proceso está vivo?" Si falla, k8s REINICIA el pod.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 15  # margen para el arranque de .NET
+            periodSeconds: 15        # frecuencia del chequeo
+            failureThreshold: 3      # reinicia tras 3 fallos seguidos
+
+          # READINESS: "¿puede atender tráfico?" (incluye la BD). Si falla,
+          # k8s SACA el pod del balanceador SIN reiniciarlo.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # RECURSOS: requests = lo garantizado (para planificar el nodo);
+          # limits = techo duro (por encima, throttling/OOMKill).
+          resources:
+            requests:
+              cpu: "250m"            # 0,25 vCPU garantizada
+              memory: "256Mi"
+            limits:
+              cpu: "1"               # máximo 1 vCPU
+              memory: "512Mi"
+
+          # SEGURIDAD del contenedor (defensa en profundidad).
+          securityContext:
+            allowPrivilegeEscalation: false   # sin sudo/setuid
+            readOnlyRootFilesystem: false     # .NET necesita /tmp escribible
+            runAsNonRoot: true                # refuerza el USER app del Dockerfile
