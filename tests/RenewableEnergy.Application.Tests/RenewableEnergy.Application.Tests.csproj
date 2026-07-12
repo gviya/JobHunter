@@ -1,0 +1,29 @@
+<!--
+  Tests UNITARIOS de los casos de uso: se mockea todo lo externo
+  (repositorios, unit of work, caché) con Moq. Sin base de datos.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RenewableEnergy.Application\RenewableEnergy.Application.csproj" />
+    <ProjectReference Include="..\..\src\RenewableEnergy.Domain\RenewableEnergy.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

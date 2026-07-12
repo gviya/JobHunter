@@ -23,6 +23,9 @@ namespace RenewableEnergy.Infrastructure.Persistence.Configurations
 
             builder.HasKey(p => p.Id);
 
+            // El Guid lo genera el DOMINIO (BaseEntity), no la base de datos.
+            builder.Property(p => p.Id).ValueGeneratedNever();
+
             builder.Property(p => p.Nombre)
                 .IsRequired()
                 .HasMaxLength(200);

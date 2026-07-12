@@ -40,6 +40,12 @@
          v14 (última MIT); el vector del aviso no aplica a este uso
          (configuración de mapeos estática, sin entrada de usuario). -->
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
+
+    <!-- SQLitePCLRaw ≤2.1.11 (transitiva de EF Core Sqlite, SOLO en tests):
+         no existe versión parcheada en la línea 2.x que EF Core requiere.
+         El riesgo real es nulo aquí: SQLite se usa únicamente en memoria
+         dentro de los tests E2E, sin datos ni entrada externa. -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
   </ItemGroup>
 
 </Project>

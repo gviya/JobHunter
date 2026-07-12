@@ -63,9 +63,18 @@ try
 
     app.Run();
 }
-catch (Exception ex)
+catch (Exception ex) when (ex is not HostAbortedException)
 {
+    // El filtro `when` deja pasar HostAbortedException: la lanzan a propósito
+    // las herramientas que interceptan el arranque (dotnet-ef en tiempo de
+    // diseño, WebApplicationFactory en los tests E2E). Sin el filtro, esas
+    // herramientas fallarían con "the entry point exited without building a host".
     Log.Fatal(ex, "La aplicación no pudo arrancar");
+
+    // Se RELANZA: un fallo de arranque debe tumbar el proceso con código de
+    // error (el orquestador — Kubernetes, App Service — necesita saberlo
+    // para no enrutar tráfico a un pod muerto).
+    throw;
 }
 finally
 {

@@ -1,0 +1,33 @@
+<!--
+  Tests de INTEGRACIÓN de la persistencia: SQL Server REAL en Docker
+  (Testcontainers). Verifican lo que los mocks no pueden: que el SQL
+  generado por EF funciona, que los value converters redondean bien,
+  que los índices únicos saltan...
+
+  Si Docker no está disponible, los tests se OMITEN (skip) en lugar de
+  fallar: `dotnet test` queda en verde en cualquier máquina.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Testcontainers.MsSql" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RenewableEnergy.Infrastructure\RenewableEnergy.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

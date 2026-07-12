@@ -1,0 +1,27 @@
+<!--
+  Tests UNITARIOS del dominio: los más rápidos y valiosos de la pirámide.
+  Sin mocks, sin base de datos: el dominio es C# puro, se prueba directo.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RenewableEnergy.Domain\RenewableEnergy.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

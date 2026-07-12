@@ -13,6 +13,14 @@ namespace RenewableEnergy.Infrastructure.Persistence.Configurations
 
             builder.HasKey(m => m.Id);
 
+            // CLAVE GENERADA EN EL CLIENTE: el Guid lo asigna BaseEntity al
+            // construir la entidad, NUNCA la base de datos. Sin esta línea,
+            // EF asumiría "Guid = lo genera el store" y trataría como
+            // EXISTENTES (UPDATE) a las mediciones nuevas que descubre por
+            // navegación desde un proyecto ya trackeado — dando el clásico
+            // DbUpdateConcurrencyException "affected 0 rows".
+            builder.Property(m => m.Id).ValueGeneratedNever();
+
             // PRECISIÓN DECIMAL EXPLÍCITA: sin esto, SQL Server usaría el
             // default y EF avisaría con un warning de posible truncamiento.
             builder.Property(m => m.EnergiaGeneradaKWh)
