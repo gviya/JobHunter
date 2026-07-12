@@ -37,10 +37,13 @@ namespace RenewableEnergy.Application.Features.Proyectos.Queries.ObtenerProyecto
         {
             var claveCache = CacheKeys.ProyectoDetalle(request.Id);
 
-            // 1. Intento de lectura de caché (cache HIT).
+            // 1. Intento de lectura de caché (cache HIT). Se comprueba
+            //    IsNullOrWhiteSpace y no solo null: una entrada vacía o
+            //    corrupta en la caché debe tratarse como MISS (releer de BD),
+            //    nunca tumbar la petición con un error de deserialización.
             var enCache = await cache.GetStringAsync(claveCache, cancellationToken);
 
-            if (enCache is not null)
+            if (!string.IsNullOrWhiteSpace(enCache))
             {
                 logger.LogDebug("Cache HIT para {ClaveCache}", claveCache);
                 return JsonSerializer.Deserialize<ProyectoDetalleViewModel>(enCache)!;

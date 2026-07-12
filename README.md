@@ -48,6 +48,8 @@ Guía completa de instalación y problemas frecuentes: [`docs/SETUP.md`](docs/SE
 | Cada patrón (CQRS, Outbox, Result, Specification...) | [`docs/PATRONES.md`](docs/PATRONES.md) |
 | Las reglas de código del proyecto | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) |
 | Los endpoints y sus códigos de error | [`docs/API.md`](docs/API.md) |
+| **Practicar con ejercicios guiados** (hay huecos dejados a propósito) | [`docs/EJERCICIOS.md`](docs/EJERCICIOS.md) |
+| Repasar antes de una entrevista (preguntas → código del repo) | [`docs/PREGUNTAS_ENTREVISTA.md`](docs/PREGUNTAS_ENTREVISTA.md) |
 | Cada capa por dentro | El `README.md` de cada proyecto en `src/` |
 
 Rutas de lectura del CÓDIGO (de dentro hacia fuera, como se construye):
@@ -96,7 +98,8 @@ Rutas de lectura del CÓDIGO (de dentro hacia fuera, como se construye):
 ## ✅ Estado de calidad
 
 - `dotnet build` — sin errores ni warnings (`-warnaserror` en CI).
-- `dotnet test` — 71 tests en verde + 6 de integración (corren donde hay Docker, p. ej. en CI).
+- `dotnet test` — 111 tests en verde + 6 de integración (corren donde hay Docker, p. ej. en CI).
+- Cobertura de líneas: **Domain 82 %** y **Application 81 %** (donde vive el negocio).
 - 9 reglas de arquitectura ejecutables (las capas no se pueden romper sin que el CI avise).
 
 ## 📚 Origen

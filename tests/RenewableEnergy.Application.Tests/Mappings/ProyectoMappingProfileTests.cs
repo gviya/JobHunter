@@ -38,6 +38,7 @@ namespace RenewableEnergy.Application.Tests.Mappings
 
             proyecto.RegistrarMedicion(DateTime.UtcNow.AddDays(-2), 100.5m);
             proyecto.RegistrarMedicion(DateTime.UtcNow.AddDays(-1), 200.5m);
+            proyecto.AgregarInstalacion("String fotovoltaico A", Domain.ValueObjects.PotenciaKW.Create(375m));
 
             var viewModel = mapper.Map<ProyectoDetalleViewModel>(proyecto);
 
@@ -48,6 +49,10 @@ namespace RenewableEnergy.Application.Tests.Mappings
             // Campo CALCULADO en el mapping.
             viewModel.TotalEnergiaGeneradaKWh.Should().Be(301m);
             viewModel.Mediciones.Should().HaveCount(2);
+
+            // La instalación también se aplana (PotenciaInstalada.Valor → PotenciaKW).
+            viewModel.Instalaciones.Should().ContainSingle()
+                .Which.PotenciaKW.Should().Be(375m);
         }
     }
 }

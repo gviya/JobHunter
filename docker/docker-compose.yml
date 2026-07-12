@@ -45,8 +45,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      # /health/live responde si el proceso está vivo.
-      test: ["CMD-SHELL", "curl -fs http://localhost:8080/health/live || exit 1"]
+      # OJO: la imagen aspnet NO trae curl ni wget (superficie mínima).
+      # Se comprueba que Kestrel acepta conexiones con /dev/tcp de bash.
+      # El chequeo HTTP "de verdad" (/health/live, /health/ready) lo hacen
+      # Kubernetes con sus probes y la monitorización externa.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/8080' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
