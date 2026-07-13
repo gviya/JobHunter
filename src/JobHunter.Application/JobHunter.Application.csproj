@@ -1,0 +1,36 @@
+<!--
+  ==================================================================
+  JobHunter.Application — Los CASOS DE USO de la aplicación.
+
+  ¿QUÉ VIVE AQUÍ?
+  Commands, Queries, Handlers, Validators y los pipeline behaviors.
+
+  DEPENDENCIAS PERMITIDAS: Domain y librerías de orquestación
+  (MediatR, FluentValidation) + ABSTRACCIONES de Microsoft.
+  PROHIBIDO: EF Core, Hangfire, HttpClient... (eso es Infrastructure).
+  Los tests de arquitectura verifican esta regla automáticamente.
+  ==================================================================
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\JobHunter.Domain\JobHunter.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- CQRS: mediador que conecta endpoint/job -> Handler -->
+    <PackageReference Include="MediatR" />
+    <!-- Validación declarativa de Commands/Queries -->
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+    <!-- Solo ABSTRACCIONES (interfaces), nunca implementaciones -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Los tests unitarios pueden ver los handlers internal -->
+    <InternalsVisibleTo Include="JobHunter.Application.Tests" />
+  </ItemGroup>
+
+</Project>

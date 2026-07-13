@@ -1,0 +1,56 @@
+<!--
+  ==================================================================
+  JobHunter.Infrastructure — Los DETALLES TÉCNICOS.
+
+  Implementa los contratos que definen Domain y Application:
+  EF Core + SQLite (DbContext, repositorio), los providers de empleo
+  (HttpClient), el cliente de Claude, embeddings de Ollama, envío de
+  email con MailKit y el job de Hangfire.
+
+  Es la capa MÁS REEMPLAZABLE: cambiar SQLite por PostgreSQL o Gmail
+  por otro SMTP solo toca este proyecto.
+  ==================================================================
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\JobHunter.Application\JobHunter.Application.csproj" />
+    <ProjectReference Include="..\JobHunter.Domain\JobHunter.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Aporta Microsoft.Extensions.* (Http, Options, Configuration,
+         Logging, DI, Hosting) sin convertir esta librería en un proyecto
+         web: así los providers pueden usar IHttpClientFactory y el
+         patrón Options sin añadir paquetes sueltos. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup Label="Persistencia (EF Core + SQLite)">
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup Label="Scheduler + servicios externos">
+    <!-- Job diario (la configuración del server/dashboard vive en la API) -->
+    <PackageReference Include="Hangfire.Core" />
+    <!-- Envío del informe por SMTP -->
+    <PackageReference Include="MailKit" />
+    <!-- Scraping headless (fase posterior) -->
+    <PackageReference Include="Microsoft.Playwright" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Los tests de integración instancian los repositorios internal -->
+    <InternalsVisibleTo Include="JobHunter.Infrastructure.Tests" />
+  </ItemGroup>
+
+</Project>

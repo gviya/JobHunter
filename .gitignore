@@ -9,6 +9,12 @@
 **/out/
 *.user
 
+# Bases de datos SQLite locales (jobhunter.db, hangfire.db)
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # Visual Studio / Rider / VS Code
 .vs/
 .idea/
@@ -36,6 +42,7 @@ logs/
 *.nupkg
 packages/
 
-# Docker
-docker/volumes/
 .claude/settings.local.json
+
+# Documentación personal de aprendizaje (no forma parte del repo)
+docs/

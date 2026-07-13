@@ -1,110 +1,107 @@
-# 🏛️ RenewableEnergy — Plantilla de Clean Architecture en .NET 10
+# JobHunter AI
 
-Plantilla **profesional y educativa** de Clean Architecture con el dominio de
-energías renovables. Doble propósito:
-
-1. **Aprender y consultar**: cada archivo lleva comentarios XML en español que
-   explican *qué es, por qué existe y cómo funciona* dentro de la arquitectura.
-2. **Portafolio**: demuestra el stack que piden las ofertas backend .NET —
-   CQRS, DDD táctico, Outbox, mensajería, tests en 4 niveles, Docker, K8s, CI/CD.
+Sistema en .NET 10 que busca ofertas de empleo backend .NET en varias fuentes,
+las deduplica, las analiza con Claude Haiku (API de Anthropic), calcula una
+puntuación personalizada según un perfil de candidato y envía un informe
+diario por email. Todo corre en un único proceso, con Hangfire como
+scheduler y SQLite como almacenamiento — sin infraestructura externa.
 
 ```
 ┌─────────────────────────────────────────┐
-│           Presentation / API            │  Controllers, Middleware, JWT, Swagger
+│                  Api                    │  Composition root, endpoints, Hangfire
 ├─────────────────────────────────────────┤
-│             Application                 │  CQRS (MediatR), Validators, Result
+│              Application                │  CQRS (MediatR): RunDailyPipeline, GetLatestReport
 ├─────────────────────────────────────────┤
-│               Domain                    │  Entidades, VOs, Eventos, Specs  ← el centro
+│                Domain                   │  JobOffer, JobScore, UserProfile  ← el centro
 ├─────────────────────────────────────────┤
-│            Infrastructure               │  EF Core, Outbox, MassTransit, Redis
+│             Infrastructure              │  EF Core+SQLite, providers, Claude, Ollama, MailKit
 └─────────────────────────────────────────┘
         Las dependencias apuntan HACIA DENTRO
 ```
 
-## ⚡ Quick start
+## Qué hace el pipeline diario
 
-```bash
-# Opción exprés: todo en Docker (API + SQL Server + RabbitMQ + Redis + Seq)
-docker compose -f docker/docker-compose.yml up -d
-# → Swagger:  http://localhost:5000/swagger
-# → Login:    demo@renovables.demo / Demo1234!
+1. **Busca** en paralelo en todas las fuentes activas (Adzuna, Greenhouse,
+   Lever — InfoJobs pendiente de OAuth2).
+2. **Deduplica** exacto por `(ExternalId, SourceProvider)` y semántico por
+   similitud coseno de embeddings (Ollama) contra ofertas recientes de la
+   misma empresa.
+3. **Analiza** cada oferta nueva con Claude Haiku contra el perfil del
+   candidato (resumen, seniority, techs, pros/contras, recomendación).
+4. **Puntúa** (modo de trabajo, cliente final vs. consultora, salario, stack
+   conocido/excluido) y genera el **informe HTML** con el top 15.
+5. **Envía** el informe por email (MailKit/SMTP) si hay ofertas en el top.
 
-# Opción desarrollo: script guiado (comprueba, levanta, migra y testea)
-.\scripts\setup.ps1          # Windows
-./scripts/setup.sh           # Linux/Mac
-
-# Tests (los de integración se omiten solos si no hay Docker)
-dotnet test
-```
-
-Guía completa de instalación y problemas frecuentes: [`docs/SETUP.md`](docs/SETUP.md).
-
-## 🗺️ Por dónde empezar a estudiar
-
-| Quiero entender... | Lee |
-|---|---|
-| La arquitectura y el flujo de un request | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
-| **Cómo añadir una feature paso a paso** ⭐ | [`docs/GUIA_NUEVAS_FEATURES.md`](docs/GUIA_NUEVAS_FEATURES.md) |
-| Cada patrón (CQRS, Outbox, Result, Specification...) | [`docs/PATRONES.md`](docs/PATRONES.md) |
-| **Testing desde cero** (nunca has escrito un test) | [`docs/GUIA_TESTING.md`](docs/GUIA_TESTING.md) |
-| Las reglas de código del proyecto | [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) |
-| Los endpoints y sus códigos de error | [`docs/API.md`](docs/API.md) |
-| **Practicar con ejercicios guiados** (hay huecos dejados a propósito) | [`docs/EJERCICIOS.md`](docs/EJERCICIOS.md) |
-| Repasar antes de una entrevista (preguntas → código del repo) | [`docs/PREGUNTAS_ENTREVISTA.md`](docs/PREGUNTAS_ENTREVISTA.md) |
-| Cada capa por dentro | El `README.md` de cada proyecto en `src/` |
-
-Rutas de lectura del CÓDIGO (de dentro hacia fuera, como se construye):
-
-1. `src/RenewableEnergy.Domain/Entities/ProyectoRenovable.cs` — el agregado y sus reglas.
-2. `src/RenewableEnergy.Application/Features/Proyectos/Commands/CrearProyecto/` — un caso de uso completo.
-3. `src/RenewableEnergy.Infrastructure/Persistence/Interceptors/OutboxInterceptor.cs` — la magia del Outbox.
-4. `src/RenewableEnergy.API/Controllers/ProyectosController.cs` — el HTTP fino.
-5. `tests/` — cómo se prueba cada nivel.
-
-## 📦 Estructura del repositorio
+## Estructura del repositorio
 
 ```
 ├── src/
-│   ├── RenewableEnergy.Domain/           # Negocio puro (sin dependencias)
-│   ├── RenewableEnergy.Application/      # Casos de uso CQRS
-│   ├── RenewableEnergy.Infrastructure/   # EF Core, Outbox, MassTransit, Redis
-│   └── RenewableEnergy.API/              # Controllers, JWT, Swagger
+│   ├── JobHunter.Domain/           # Entidades + interfaces, sin dependencias externas
+│   ├── JobHunter.Application/      # Casos de uso CQRS (RunDailyPipeline, GetLatestReport)
+│   ├── JobHunter.Infrastructure/   # EF Core+SQLite, providers HTTP, Claude, Ollama, MailKit, Hangfire job
+│   └── JobHunter.Api/              # Composition root, endpoints mínimos, Program.cs
 ├── tests/
-│   ├── RenewableEnergy.Domain.Tests/         # Unitarios de dominio (sin mocks)
-│   ├── RenewableEnergy.Application.Tests/    # Handlers con Moq + Builder
-│   ├── RenewableEnergy.Architecture.Tests/   # ArchUnitNET: capas vigiladas
-│   ├── RenewableEnergy.Infrastructure.Tests/ # Testcontainers (SQL Server real)
-│   └── RenewableEnergy.API.Tests/            # E2E con WebApplicationFactory
-├── docker/            # Dockerfile multi-stage + compose con healthchecks
-├── k8s/               # Deployment (probes), Service, ConfigMap, Ingress TLS
-├── .github/workflows/ # CI/CD: build+test → Sonar → imagen → deploy manual
-├── .postman/          # Colección con tests automáticos + 3 environments
-├── scripts/           # setup.ps1 / setup.sh / generar.sh (scaffolding)
-└── docs/              # Toda la documentación en español
+│   ├── JobHunter.Application.Tests/    # Scoring (JobScoreCalculator)
+│   ├── JobHunter.Infrastructure.Tests/ # Persistencia SQLite, cosine similarity, deserialización Adzuna
+│   └── JobHunter.Architecture.Tests/   # ArchUnitNET: reglas de capas vigiladas
+├── Directory.Packages.props   # Central Package Management: versiones NuGet
+├── Directory.Build.props      # TargetFramework, Nullable, etc. comunes a todos los proyectos
+└── global.json                # SDK de .NET fijado
 ```
 
-## 🧰 Stack
+## Stack
 
-**.NET 10 · C# 14** — records, primary constructors, collection expressions
-**Patrones** — Clean Architecture, CQRS, DDD táctico (agregados, VOs, eventos de dominio), Repository + UoW, Specification, Outbox, Result, Pipeline Behaviors, Builder
-**Librerías** — MediatR · FluentValidation · AutoMapper · EF Core 10 (SQL Server, PostgreSQL alternativo) · MassTransit + RabbitMQ (Azure Service Bus documentado) · Redis · Serilog + Seq · OpenTelemetry · Polly · JWT Bearer · Asp.Versioning · Swashbuckle
-**Tests** — xUnit · AwesomeAssertions · Moq · Testcontainers · ArchUnitNET · WebApplicationFactory
-**DevOps** — Docker multi-stage · docker-compose · GitHub Actions · Kubernetes · Azure Key Vault
-**Gobernanza** — Central Package Management (`Directory.Packages.props`) · `global.json` · `.editorconfig`
+**.NET 10 · C# 14** — primary constructors, collection expressions, records
+**Patrones** — Clean Architecture, CQRS (MediatR), Repository, Options, pipeline behaviors (logging/performance/validation)
+**Persistencia** — EF Core 10 + SQLite (migraciones en `Infrastructure/Persistence/Migrations`)
+**Scheduler** — Hangfire (storage SQLite), dashboard en `/hangfire`
+**Fuentes de empleo** — Adzuna (API REST), Greenhouse y Lever (boards públicos de empresas objetivo)
+**IA** — Claude Haiku vía HttpClient puro contra la Messages API de Anthropic; embeddings vía Ollama local
+**Email** — MailKit (SMTP)
+**Tests** — xUnit · AwesomeAssertions · ArchUnitNET
 
-> Nota de licencias: se fijan las **últimas versiones open source** de MediatR
-> (12.5), AutoMapper (14) y MassTransit (8.5) — las versiones posteriores son
-> comerciales. La decisión está documentada en `Directory.Packages.props`.
+## Configuración
 
-## ✅ Estado de calidad
+Los valores no sensibles viven en `src/JobHunter.Api/appsettings.json` (con
+placeholders vacíos). Los secretos (API keys, contraseñas) **no van en ese
+fichero** — usa User Secrets de .NET en desarrollo:
 
-- `dotnet build` — sin errores ni warnings (`-warnaserror` en CI).
-- `dotnet test` — 111 tests en verde + 6 de integración (corren donde hay Docker, p. ej. en CI).
-- Cobertura de líneas: **Domain 82 %** y **Application 81 %** (donde vive el negocio).
-- 9 reglas de arquitectura ejecutables (las capas no se pueden romper sin que el CI avise).
+```powershell
+dotnet user-secrets set "Anthropic:ApiKey" "sk-ant-..." --project src/JobHunter.Api
+dotnet user-secrets set "Adzuna:AppId" "..." --project src/JobHunter.Api
+dotnet user-secrets set "Adzuna:AppKey" "..." --project src/JobHunter.Api
+dotnet user-secrets set "Email:Username" "..." --project src/JobHunter.Api
+dotnet user-secrets set "Email:Password" "..." --project src/JobHunter.Api
+dotnet user-secrets set "Email:From" "..." --project src/JobHunter.Api
+dotnet user-secrets set "Email:To" "..." --project src/JobHunter.Api
+```
 
-## 📚 Origen
+Secciones configurables: `Anthropic`, `Adzuna`, `InfoJobs` (sin implementar
+todavía), `TargetCompanies:{Greenhouse,Lever}` (board tokens, no son
+secretos), `Ollama`, `Email`, `Schedule:CronExpression`.
 
-Evolución del arquetipo `Arquetipo` original (Mediator + Mapster + PostgreSQL),
-conservado en el historial de git (`git log --oneline`). El scaffolding genérico
-`scripts/generar.sh` permite crear soluciones nuevas desde cero.
+## Arrancar en local
+
+```powershell
+dotnet run --project src/JobHunter.Api
+```
+
+Aplica migraciones automáticamente, crea `data/*.db` y arranca el servidor
+de Hangfire. Endpoints:
+
+- `GET  /health` — estado.
+- `GET  /hangfire` — dashboard del scheduler.
+- `POST /jobs/run-now` — lanza el pipeline sin esperar al cron.
+- `GET  /reports/latest` — último informe generado (HTML).
+
+## Tests
+
+```powershell
+dotnet test
+```
+
+## Fuera de alcance (pendiente)
+
+- `InfoJobsProvider` — esqueleto sin implementar (falta el flujo OAuth2).
+- Scraping con Playwright (Tecnoempleo, WTTJ).
+- Empaquetado Docker / despliegue.

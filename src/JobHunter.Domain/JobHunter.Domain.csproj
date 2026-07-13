@@ -1,0 +1,13 @@
+<!--
+  ==================================================================
+  JobHunter.Domain — El CORAZÓN de la aplicación.
+
+  REGLA DE ORO de Clean Architecture: esta capa NO depende de nadie.
+  Ni de EF Core, ni de ASP.NET, ni de Application ni de Infrastructure.
+  Solo .NET base. Aquí viven las entidades, los enums, el perfil de
+  usuario y las INTERFACES (contratos) que Infrastructure implementa.
+  ==================================================================
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

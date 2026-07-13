@@ -35,16 +35,10 @@
 
   <ItemGroup>
     <!-- SUPRESIÓN JUSTIFICADA de auditoría NuGet (documentar siempre el porqué):
-         El aviso GHSA-rvv3-g6hj-g44x de AutoMapper solo está parcheado en la
-         v15+, que es de licencia COMERCIAL. Esta plantilla se queda en la
-         v14 (última MIT); el vector del aviso no aplica a este uso
-         (configuración de mapeos estática, sin entrada de usuario). -->
-    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
-
-    <!-- SQLitePCLRaw ≤2.1.11 (transitiva de EF Core Sqlite, SOLO en tests):
-         no existe versión parcheada en la línea 2.x que EF Core requiere.
-         El riesgo real es nulo aquí: SQLite se usa únicamente en memoria
-         dentro de los tests E2E, sin datos ni entrada externa. -->
+         SQLitePCLRaw ≤2.1.11 (transitiva de EF Core Sqlite): no existe versión
+         parcheada en la línea 2.x que EF Core 10 requiere. El riesgo real es
+         bajo aquí: SQLite es un fichero local sin superficie de red, y la base
+         de datos solo almacena ofertas de empleo públicas. -->
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
   </ItemGroup>
 

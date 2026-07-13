@@ -1,0 +1,31 @@
+<!--
+  Tests de INTEGRACIÓN de la persistencia sobre SQLite (fichero temporal
+  o modo :memory:). Verifican lo que los mocks no pueden: que el SQL
+  generado por EF funciona, que los value converters serializan bien y
+  que los índices únicos saltan. Sin Docker: rápido en cualquier máquina.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\JobHunter.Infrastructure\JobHunter.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>
