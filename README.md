@@ -105,3 +105,7 @@ dotnet test
 - `InfoJobsProvider` — esqueleto sin implementar (falta el flujo OAuth2).
 - Scraping con Playwright (Tecnoempleo, WTTJ).
 - Empaquetado Docker / despliegue.
+
+## Créditos
+- **gviya** — Desarrollo principal, arquitectura y decisiones técnicas
+- Asistido por IA (Claude) para generación y revisión de código

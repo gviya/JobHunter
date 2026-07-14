@@ -41,6 +41,32 @@ public sealed class InfoJobsOptions
     public string ClientSecret { get; set; } = "";
 }
 
+/// <summary>
+/// Sección "JSearch": API de RapidAPI que consulta Google for Jobs
+/// (indexa LinkedIn, Indeed, Glassdoor, ZipRecruiter...).
+/// </summary>
+public sealed class JSearchOptions
+{
+    public const string SectionName = "JSearch";
+
+    public string ApiKey { get; set; } = "";
+    public string Host { get; set; } = "jsearch.p.rapidapi.com";
+    public string Country { get; set; } = "es";
+    public string Language { get; set; } = "es";
+
+    /// <summary>Ventana temporal de la búsqueda ("today", "3days", "week", "month", "all").</summary>
+    public string DatePosted { get; set; } = "today";
+}
+
+/// <summary>Sección "Jooble": agregador con API de partners gratuita.</summary>
+public sealed class JoobleOptions
+{
+    public const string SectionName = "Jooble";
+
+    public string ApiKey { get; set; } = "";
+    public string BaseUrl { get; set; } = "https://jooble.org/api/";
+}
+
 /// <summary>Sección "TargetCompanies": board tokens de Greenhouse y Lever.</summary>
 public sealed class TargetCompaniesOptions
 {

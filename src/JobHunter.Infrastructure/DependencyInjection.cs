@@ -52,6 +52,8 @@ public static class DependencyInjection
         services.Configure<AnthropicOptions>(configuration.GetSection(AnthropicOptions.SectionName));
         services.Configure<AiOptions>(configuration.GetSection(AiOptions.SectionName));
         services.Configure<InfoJobsOptions>(configuration.GetSection(InfoJobsOptions.SectionName));
+        services.Configure<JSearchOptions>(configuration.GetSection(JSearchOptions.SectionName));
+        services.Configure<JoobleOptions>(configuration.GetSection(JoobleOptions.SectionName));
         services.Configure<TargetCompaniesOptions>(configuration.GetSection(TargetCompaniesOptions.SectionName));
         services.Configure<OllamaOptions>(configuration.GetSection(OllamaOptions.SectionName));
         services.Configure<EmailOptions>(configuration.GetSection(EmailOptions.SectionName));
@@ -65,6 +67,8 @@ public static class DependencyInjection
         services.AddScoped<IJobProvider, AdzunaProvider>();
         services.AddScoped<IJobProvider, GreenhouseProvider>();
         services.AddScoped<IJobProvider, LeverProvider>();
+        services.AddScoped<IJobProvider, JSearchProvider>();
+        services.AddScoped<IJobProvider, JoobleProvider>();
 
         // InfoJobs pendiente de OAuth2 — descomentar cuando esté listo:
         // services.AddScoped<IJobProvider, InfoJobsProvider>();

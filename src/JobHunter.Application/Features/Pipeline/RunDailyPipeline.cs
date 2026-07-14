@@ -44,8 +44,13 @@ public static partial class RunDailyPipeline
             logger.LogInformation("Búsqueda: {Total} ofertas de {Providers} providers.",
                 found.Count, providers.Count());
 
+            // ── 1b. FILTRAR POR UBICACIÓN (España o remoto sin especificar) ──
+            var localOffers = LocationFilter.Apply(found);
+            logger.LogInformation("Filtro de ubicación: {Kept}/{Total} compatibles con España/remoto.",
+                localOffers.Count, found.Count);
+
             // ── 2. DEDUP EXACTO + guardar nuevas ────────────────────────
-            var newOffers = await SaveNewOffersAsync(found, cancellationToken);
+            var newOffers = await SaveNewOffersAsync(localOffers, cancellationToken);
             report.TotalNew = newOffers.Count;
 
             // ── 3. DEDUP SEMÁNTICO (embeddings de Ollama) ───────────────
@@ -237,6 +242,7 @@ public static partial class RunDailyPipeline
                   .stars{color:#f5a623;font-size:18px}
                   .meta{color:#52606d;font-size:14px;margin:6px 0}
                   .tags{color:#3b5bdb;font-size:13px}
+                  .src{display:inline-block;background:#eef2ff;color:#3730a3;font-size:12px;padding:2px 8px;border-radius:999px;vertical-align:middle}
                   a{color:#2563eb;text-decoration:none}
                 </style></head><body>
                 """);
@@ -272,8 +278,8 @@ public static partial class RunDailyPipeline
                 sb.Append($"""
                     <div class="card">
                       <div class="stars">{stars} <span style="color:#52606d;font-size:13px">({score?.TotalScore ?? 0} pts)</span></div>
-                      <h3>{Encode(offer.Title)}</h3>
-                      <div class="meta">{Encode(offer.CompanyName)} · {offer.WorkMode} · {Encode(offer.Location ?? "—")} · {salary}</div>
+                      <h3>{Encode(offer.Title)} <span class="src">{Encode(offer.SourceProvider)}</span></h3>
+                      <div class="meta">{Encode(offer.CompanyName)} · {WorkModeLabel(offer.WorkMode)} · {Encode(offer.Location ?? "—")} · {salary} · publicada el {offer.PublishedAt:yyyy-MM-dd}</div>
                       <div class="tags">{Encode(score?.AiTechList ?? "")}</div>
                       <p>{Encode(score?.AiSummary ?? "")}</p>
                       <p><i>{Encode(score?.AiRecommendation ?? "")}</i></p>
@@ -285,6 +291,14 @@ public static partial class RunDailyPipeline
             sb.Append("</body></html>");
             return sb.ToString();
         }
+
+        private static string WorkModeLabel(WorkMode mode) => mode switch
+        {
+            WorkMode.Remote => "Remoto",
+            WorkMode.Hybrid => "Híbrido",
+            WorkMode.OnSite => "Presencial",
+            _ => "modo n/d",
+        };
 
         private static string Stars(int totalScore)
         {
