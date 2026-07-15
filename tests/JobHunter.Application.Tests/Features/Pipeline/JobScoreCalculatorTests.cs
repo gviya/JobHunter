@@ -7,84 +7,174 @@ namespace JobHunter.Application.Tests.Features.Pipeline;
 
 public sealed class JobScoreCalculatorTests
 {
+    // Descripción larga y detallada (>1200 chars) que solo menciona C#, .NET
+    // y Docker como techs conocidas: representa una oferta "bien explicada".
+    private const string DetailedBackendDescription = """
+        Buscamos un desarrollador backend con sólida experiencia en C# y .NET
+        para unirse a nuestro equipo de producto. Trabajarás en el diseño,
+        desarrollo y mantenimiento de servicios backend robustos y escalables
+        que dan soporte a miles de usuarios diarios. Entre tus responsabilidades
+        estarán construir y evolucionar los microservicios del núcleo del
+        sistema, diseñar el modelo de datos, optimizar el rendimiento de las
+        consultas y garantizar la calidad mediante pruebas automatizadas.
+        Valoramos la capacidad de escribir código limpio, mantenible y bien
+        documentado, así como la colaboración estrecha con el resto del equipo
+        en revisiones de código. El despliegue de los servicios se realiza
+        mediante contenedores Docker en un entorno de integración y despliegue
+        continuo. Ofrecemos un entorno de trabajo flexible, con posibilidad de
+        teletrabajo, formación continua y participación en decisiones técnicas
+        relevantes. El candidato ideal disfruta resolviendo problemas complejos,
+        tiene mentalidad de mejora continua y quiere crecer profesionalmente en
+        un equipo que cuida la calidad del software por encima de las entregas
+        apresuradas. Si te apasiona el desarrollo backend y quieres formar parte
+        de un proyecto ambicioso con impacto real, queremos conocerte.
+        """;
+
+    private static AiAnalysisResult Analysis(int compatibility, string[]? importantTechs = null) =>
+        new(
+            Summary: "Resumen",
+            Seniority: "Senior",
+            ImportantTechs: importantTechs ?? [],
+            Compatibility: compatibility,
+            Pros: [],
+            Cons: [],
+            Recommendation: "Aplicar",
+            Requirements: []);
+
     [Fact]
-    public void Calculate_OfertaRemotaClienteFinal60kConTechsConocidas_ReflejaLosPesos()
+    public void Calculate_OfertaBackendBienExplicadaRemotaClienteFinal_ReflejaLosPesos()
     {
-        // Arrange: oferta remota, cliente final, salario 60k y tres techs
-        // conocidas (C#, .NET, Docker) sin ninguna excluida.
         var offer = new JobOffer
         {
             ExternalId = "1",
             SourceProvider = "Test",
-            Title = "Desarrollador Backend",
+            Title = "Desarrollador Backend Senior",
             CompanyName = "Acme",
             Url = "https://example.com/1",
-            Description = "Buscamos experiencia en C#, .NET y Docker.",
+            Description = DetailedBackendDescription,
             WorkMode = WorkMode.Remote,
             IsClientFinal = true,
             SalaryMax = 60000m,
         };
 
-        var analysis = new AiAnalysisResult(
-            Summary: "Buena oferta",
-            Seniority: "Senior",
-            ImportantTechs: [],
-            Compatibility: 80,
-            Pros: [],
-            Cons: [],
-            Recommendation: "Aplicar");
+        var score = JobScoreCalculator.Calculate(offer, Analysis(80), new UserProfile());
 
-        var profile = new UserProfile();
-
-        // Act
-        var score = JobScoreCalculator.Calculate(offer, analysis, profile);
-
-        // Assert — componentes según los pesos definidos.
-        score.RemoteScore.Should().Be(30);          // Remote
+        score.RemoteScore.Should().Be(30);           // Remote
         score.ClientFinalScore.Should().Be(20);      // cliente final
         score.SalaryScore.Should().Be(20);           // SalaryMax >= 60k
-        score.TechScore.Should().Be(9);              // 3 techs conocidas * 3
+        score.TechScore.Should().Be(9);              // C#, .NET, Docker => 3 * 3
+        score.InfoQualityScore.Should().Be(8);       // descripción larga y detallada
         score.CompatibilityScore.Should().Be(80);
 
-        // TotalScore = Compatibility/2 + remote + clientFinal + salary + tech
-        //            = 40 + 30 + 20 + 20 + 9 = 119
-        score.TotalScore.Should().Be(119);
+        // TotalScore = Compatibility/2 + remote + clientFinal + salary + tech + info
+        //            = 40 + 30 + 20 + 20 + 9 + 8 = 127
+        score.TotalScore.Should().Be(127);
     }
 
     [Fact]
-    public void Calculate_HibridoFueraDeMadridSinSalarioYTechExcluida_Penaliza()
+    public void Calculate_OfertaFullstackConVariasTechsDeFront_SeHunde()
     {
         var offer = new JobOffer
         {
             ExternalId = "2",
             SourceProvider = "Test",
-            Title = "Fullstack Angular + .NET",
+            Title = "Desarrollador Fullstack Angular + .NET",
             CompanyName = "Consultora XYZ",
             Url = "https://example.com/2",
-            Description = "Proyecto con Angular y algo de .NET.",
+            Description = "Proyecto fullstack con Angular y React, algo de .NET.",
             WorkMode = WorkMode.Hybrid,
             Location = "Barcelona",
             IsClientFinal = false,
             SalaryMax = null,
         };
 
+        var score = JobScoreCalculator.Calculate(offer, Analysis(40, ["Angular", "React"]), new UserProfile());
+
+        score.RemoteScore.Should().Be(-5);        // híbrido fuera de Madrid
+        score.ClientFinalScore.Should().Be(-10);  // consultora
+        score.SalaryScore.Should().Be(-5);        // salario null
+        // .NET conocida (+3); excluidas distintas = Fullstack, Angular, React
+        // => -min(3*12, 36) = -36  =>  3 - 36 = -33
+        score.TechScore.Should().Be(-33);
+        score.InfoQualityScore.Should().Be(-25);  // descripción muy corta
+        // Total = 20 + (-5) + (-10) + (-5) + (-33) + (-25) = -58
+        score.TotalScore.Should().Be(-58);
+    }
+
+    [Fact]
+    public void Calculate_OfertaSinDescripcion_PenalizaLaFaltaDeInformacion()
+    {
+        var offer = new JobOffer
+        {
+            ExternalId = "3",
+            SourceProvider = "Test",
+            Title = "Backend Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/3",
+            Description = null,
+            WorkMode = WorkMode.Remote,
+            IsClientFinal = true,
+            SalaryMax = 55000m,
+        };
+
+        var score = JobScoreCalculator.Calculate(offer, Analysis(70), new UserProfile());
+
+        score.InfoQualityScore.Should().Be(-25);  // sin descripción => máxima penalización
+        // Total = 35 + 30 + 20 + 15 + 0 + (-25) = 75
+        score.TotalScore.Should().Be(75);
+    }
+
+    [Fact]
+    public void Calculate_MencionDeJavaScript_NoActivaLaExclusionDeJava()
+    {
+        var offer = new JobOffer
+        {
+            ExternalId = "4",
+            SourceProvider = "Test",
+            Title = "Backend .NET Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/4",
+            Description = "Backend en .NET; algo de JavaScript en el lado cliente.",
+            WorkMode = WorkMode.Remote,
+            IsClientFinal = true,
+            SalaryMax = 55000m,
+        };
+
+        var score = JobScoreCalculator.Calculate(offer, Analysis(70), new UserProfile());
+
+        // "JavaScript" NO debe disparar la exclusión de "Java": solo cuenta
+        // .NET como conocida (+3), sin penalización de tech excluida.
+        score.TechScore.Should().Be(3);
+    }
+
+    [Fact]
+    public void Calculate_CopiaRequisitosDelAnalisisAlScore()
+    {
+        var offer = new JobOffer
+        {
+            ExternalId = "5",
+            SourceProvider = "Test",
+            Title = "Backend Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/5",
+            Description = DetailedBackendDescription,
+            WorkMode = WorkMode.Remote,
+            IsClientFinal = true,
+            SalaryMax = 55000m,
+        };
+
         var analysis = new AiAnalysisResult(
-            Summary: "Regular",
-            Seniority: "Mid",
-            ImportantTechs: ["Angular"],
-            Compatibility: 40,
+            Summary: "Resumen",
+            Seniority: "Senior",
+            ImportantTechs: [".NET"],
+            Compatibility: 70,
             Pros: [],
             Cons: [],
-            Recommendation: "Dudoso");
+            Recommendation: "Aplicar",
+            Requirements: ["3 años con C#", "Experiencia con Docker", "Inglés B2"]);
 
         var score = JobScoreCalculator.Calculate(offer, analysis, new UserProfile());
 
-        score.RemoteScore.Should().Be(-5);       // híbrido fuera de Madrid
-        score.ClientFinalScore.Should().Be(-10); // consultora
-        score.SalaryScore.Should().Be(-5);       // salario null
-        // .NET conocida (+3) pero aparece Angular (excluida) => 3 - 15 = -12
-        score.TechScore.Should().Be(-12);
-        // Total = 20 + (-5) + (-10) + (-5) + (-12) = -12
-        score.TotalScore.Should().Be(-12);
+        score.AiRequirements.Should().Be("3 años con C# · Experiencia con Docker · Inglés B2");
     }
 }

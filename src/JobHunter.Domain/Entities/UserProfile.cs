@@ -21,10 +21,22 @@ public sealed class UserProfile
         ".NET Aspire", "Dapr", "Azure Service Bus", "Kubernetes", "Redis", "gRPC"
     ];
 
-    /// <summary>Tecnologías que descartan la oferta: restan puntos.</summary>
+    /// <summary>
+    /// Tecnologías/roles que descartan la oferta: restan puntos. El candidato
+    /// es backend puro y apenas tiene conocimiento de frontend, así que se
+    /// listan los frameworks de front y las señales de rol "fullstack"
+    /// (frontend obligatorio), además de stacks de otro lenguaje.
+    ///
+    /// A propósito NO se incluyen "JavaScript"/"TypeScript" sueltos: muchas
+    /// ofertas de backend .NET los mencionan de pasada como "nice to have" y
+    /// no deben penalizarse por eso. El matiz "el rol EXIGE frontend" lo juzga
+    /// la IA vía el prompt (baja la compatibilidad), que sí entiende contexto.
+    /// </summary>
     public string[] ExcludedTechs { get; init; } =
     [
-        "Angular", "React", "Vue", "Frontend", "PHP", "Java"
+        "Angular", "React", "Vue", "Svelte", "Next.js", "Nextjs",
+        "Frontend", "Front-end", "Fullstack", "Full-stack", "Full Stack",
+        "PHP", "Java", "Python", "Ruby", "Golang"
     ];
 
     /// <summary>Modo de trabajo preferido.</summary>

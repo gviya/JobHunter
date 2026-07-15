@@ -130,6 +130,9 @@ namespace JobHunter.Infrastructure.Persistence.Migrations
                     b.Property<string>("AiRecommendation")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("AiRequirements")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("AiSeniority")
                         .HasColumnType("TEXT");
 
@@ -143,6 +146,9 @@ namespace JobHunter.Infrastructure.Persistence.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("CompatibilityScore")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("InfoQualityScore")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("RemoteScore")

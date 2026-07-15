@@ -23,7 +23,7 @@ internal static class JobAnalysisPrompt
     {
         var sb = new StringBuilder();
 
-        sb.AppendLine("Eres un asistente que evalúa ofertas de empleo para un desarrollador backend .NET.");
+        sb.AppendLine("Eres un asistente que evalúa ofertas de empleo para un desarrollador BACKEND .NET.");
         sb.AppendLine();
         sb.AppendLine("PERFIL DEL CANDIDATO:");
         sb.AppendLine($"- Tecnologías que domina: {string.Join(", ", profile.KnownTechs)}");
@@ -31,6 +31,16 @@ internal static class JobAnalysisPrompt
         sb.AppendLine($"- Tecnologías excluyentes (no quiere): {string.Join(", ", profile.ExcludedTechs)}");
         sb.AppendLine($"- Modo de trabajo preferido: {profile.PreferredWorkMode}");
         sb.AppendLine($"- Salario objetivo: {profile.TargetSalary} EUR/año (mínimo {profile.MinAcceptableSalary}).");
+        sb.AppendLine();
+        sb.AppendLine("MUY IMPORTANTE sobre el encaje:");
+        sb.AppendLine("- El candidato es BACKEND PURO. Apenas tiene conocimiento de frontend: tiene");
+        sb.AppendLine("  alguna noción pero NO sabe trabajar con ello.");
+        sb.AppendLine("- Si la oferta EXIGE frontend (Angular, React, Vue...) o es un rol fullstack donde");
+        sb.AppendLine("  el frontend es parte importante del día a día, asigna una compatibility MUY BAJA");
+        sb.AppendLine("  (por debajo de 40), por muy buena que sea en lo demás.");
+        sb.AppendLine("- Si la oferta apenas describe el puesto (poca información, sin stack ni");
+        sb.AppendLine("  responsabilidades claras), baja también la compatibility: no se puede valorar");
+        sb.AppendLine("  bien un puesto que no se explica.");
         sb.AppendLine();
         sb.AppendLine("OFERTA:");
         sb.AppendLine($"- Título: {offer.Title}");
@@ -44,16 +54,21 @@ internal static class JobAnalysisPrompt
         sb.AppendLine("(sin texto adicional, sin fences) con EXACTAMENTE esta forma:");
         sb.AppendLine("""
             {
-              "summary": "resumen en 1-2 frases",
+              "summary": "resumen de 3-4 frases que incluya QUÉ PIDE la oferta: stack/tecnologías, años de experiencia, responsabilidades principales y tipo de empresa",
               "seniority": "Junior|Mid|Senior|Lead",
               "importantTechs": ["tech1", "tech2"],
+              "requirements": ["requisito concreto 1", "requisito concreto 2", "requisito concreto 3"],
               "compatibility": 0,
               "pros": ["pro1", "pro2"],
               "cons": ["con1", "con2"],
               "recommendation": "recomendación breve"
             }
             """);
-        sb.AppendLine("Donde compatibility es un entero 0-100 de encaje con el perfil.");
+        sb.AppendLine("Donde:");
+        sb.AppendLine("- compatibility es un entero 0-100 de encaje con el perfil.");
+        sb.AppendLine("- requirements es la lista de lo que la oferta EXIGE de verdad (tecnologías,");
+        sb.AppendLine("  experiencia, titulación, idiomas...). Si la oferta no lo especifica, deja la");
+        sb.AppendLine("  lista vacía en vez de inventar requisitos.");
 
         return sb.ToString();
     }
@@ -83,7 +98,8 @@ internal static class JobAnalysisPrompt
                 Compatibility: Math.Clamp(parsed.Compatibility, 0, 100),
                 Pros: parsed.Pros ?? [],
                 Cons: parsed.Cons ?? [],
-                Recommendation: parsed.Recommendation ?? string.Empty);
+                Recommendation: parsed.Recommendation ?? string.Empty,
+                Requirements: parsed.Requirements ?? []);
 
             return true;
         }
@@ -145,5 +161,6 @@ internal static class JobAnalysisPrompt
         [property: JsonPropertyName("compatibility")] int Compatibility,
         [property: JsonPropertyName("pros")] string[]? Pros,
         [property: JsonPropertyName("cons")] string[]? Cons,
-        [property: JsonPropertyName("recommendation")] string? Recommendation);
+        [property: JsonPropertyName("recommendation")] string? Recommendation,
+        [property: JsonPropertyName("requirements")] string[]? Requirements);
 }

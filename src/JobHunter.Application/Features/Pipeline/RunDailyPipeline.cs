@@ -27,8 +27,11 @@ public static partial class RunDailyPipeline
     {
         private const float DuplicateThreshold = 0.92f;
 
+        // Keywords deliberadamente de BACKEND: el candidato es backend puro.
+        // Se mantienen 3 para no agotar la cuota gratuita de JSearch (200
+        // peticiones/mes, 1 por keyword al día ≈ 90/mes).
         private static readonly SearchFilter DefaultFilter = new(
-            Keywords: ["backend .NET", "C# developer", "desarrollador backend"],
+            Keywords: ["backend .NET", "C# backend developer", "desarrollador backend .NET"],
             Location: "España",
             WorkMode: null,
             MinSalary: null,
@@ -242,6 +245,8 @@ public static partial class RunDailyPipeline
                   .stars{color:#f5a623;font-size:18px}
                   .meta{color:#52606d;font-size:14px;margin:6px 0}
                   .tags{color:#3b5bdb;font-size:13px}
+                  .reqs{background:#f8fafc;border-left:3px solid #3b5bdb;padding:8px 12px;margin:8px 0;font-size:13px;color:#334155}
+                  .reqs b{color:#1e293b}
                   .src{display:inline-block;background:#eef2ff;color:#3730a3;font-size:12px;padding:2px 8px;border-radius:999px;vertical-align:middle}
                   a{color:#2563eb;text-decoration:none}
                 </style></head><body>
@@ -275,6 +280,10 @@ public static partial class RunDailyPipeline
                     var (min, max) => $"{min:N0} – {max:N0} €",
                 };
 
+                var requirements = string.IsNullOrWhiteSpace(score?.AiRequirements)
+                    ? ""
+                    : $"""<div class="reqs"><b>Requisitos que piden:</b> {Encode(score!.AiRequirements!)}</div>""";
+
                 sb.Append($"""
                     <div class="card">
                       <div class="stars">{stars} <span style="color:#52606d;font-size:13px">({score?.TotalScore ?? 0} pts)</span></div>
@@ -282,6 +291,7 @@ public static partial class RunDailyPipeline
                       <div class="meta">{Encode(offer.CompanyName)} · {WorkModeLabel(offer.WorkMode)} · {Encode(offer.Location ?? "—")} · {salary} · publicada el {offer.PublishedAt:yyyy-MM-dd}</div>
                       <div class="tags">{Encode(score?.AiTechList ?? "")}</div>
                       <p>{Encode(score?.AiSummary ?? "")}</p>
+                      {requirements}
                       <p><i>{Encode(score?.AiRecommendation ?? "")}</i></p>
                       <a href="{Encode(offer.Url)}">Ver oferta →</a>
                     </div>

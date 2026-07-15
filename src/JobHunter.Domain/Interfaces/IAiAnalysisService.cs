@@ -19,4 +19,5 @@ public sealed record AiAnalysisResult(
     int Compatibility,
     string[] Pros,
     string[] Cons,
-    string Recommendation);
+    string Recommendation,
+    string[] Requirements);
