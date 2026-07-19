@@ -37,7 +37,9 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
    recomendación).
 5. **Puntúa** (modo de trabajo/zona, cliente final vs. consultora, salario,
    stack con pesos 0-10, techs excluidas, calidad de la información) y genera
-   el **informe HTML** con el top 15.
+   el **informe HTML** con el top 15, con un filtro interactivo en el
+   navegador para excluir/exigir términos (p. ej. "sin inglés", "solo
+   remoto") y chips por tecnología.
 6. **Envía** el informe por email (MailKit/SMTP) si hay ofertas en el top.
 
 ## Estructura del repositorio

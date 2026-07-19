@@ -238,7 +238,9 @@ public static partial class RunDailyPipeline
         private static partial Regex NonAlphanumericRegex();
 
         // ── Generación del HTML del informe ─────────────────────────────
-        private static string BuildHtml(DailyReport report)
+        // internal (no private) para poder verificar desde los tests que el
+        // HTML incluye el filtro interactivo y las tarjetas bien formadas.
+        internal static string BuildHtml(DailyReport report)
         {
             var sb = new StringBuilder();
 
@@ -259,6 +261,13 @@ public static partial class RunDailyPipeline
                   .reqs b{color:#1e293b}
                   .src{display:inline-block;background:#eef2ff;color:#3730a3;font-size:12px;padding:2px 8px;border-radius:999px;vertical-align:middle}
                   a{color:#2563eb;text-decoration:none}
+                  .filterbar{background:#fff;border-radius:10px;padding:14px 18px;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+                  .filterbar label{display:block;font-size:13px;color:#52606d;margin:8px 0 4px}
+                  .filterbar input{width:100%;max-width:520px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box}
+                  .chip{display:inline-block;cursor:pointer;background:#eef2ff;color:#3730a3;font-size:12px;padding:3px 10px;border-radius:999px;margin:3px 4px 0 0;user-select:none}
+                  .chip.active{background:#dc2626;color:#fff;text-decoration:line-through}
+                  .hidden{display:none}
+                  #filter-count{color:#52606d;font-size:13px;margin-top:10px}
                 </style></head><body>
                 """);
 
@@ -276,6 +285,22 @@ public static partial class RunDailyPipeline
             if (report.TopOffers.Count == 0)
             {
                 sb.Append("<p>No hay ofertas puntuadas todavía.</p>");
+            }
+            else
+            {
+                // Filtro interactivo del lado del navegador (JS embebido, sin
+                // dependencias). Nota: en clientes de email el script no corre;
+                // el filtro solo funciona viendo el informe en /reports/latest.
+                sb.Append("""
+                    <div class="filterbar">
+                      <label for="filter-exclude">Excluir ofertas que mencionen (separado por comas):</label>
+                      <input id="filter-exclude" type="text" placeholder="inglés, angular, java...">
+                      <label for="filter-require">Mostrar solo ofertas que mencionen:</label>
+                      <input id="filter-require" type="text" placeholder="remoto, sql server...">
+                      <div id="filter-chips"></div>
+                      <div id="filter-count"></div>
+                    </div>
+                    """);
             }
 
             foreach (var offer in report.TopOffers)
@@ -295,7 +320,7 @@ public static partial class RunDailyPipeline
                     : $"""<div class="reqs"><b>Requisitos que piden:</b> {Encode(score!.AiRequirements!)}</div>""";
 
                 sb.Append($"""
-                    <div class="card">
+                    <div class="card" data-techs="{Encode(score?.AiTechList ?? "")}">
                       <div class="stars">{stars} <span style="color:#52606d;font-size:13px">({score?.TotalScore ?? 0} pts)</span></div>
                       <h3>{Encode(offer.Title)} <span class="src">{Encode(offer.SourceProvider)}</span></h3>
                       <div class="meta">{Encode(offer.CompanyName)} · {WorkModeLabel(offer.WorkMode)} · {Encode(offer.Location ?? "—")} · {salary} · publicada el {offer.PublishedAt:yyyy-MM-dd}</div>
@@ -307,6 +332,84 @@ public static partial class RunDailyPipeline
                     </div>
                     """);
             }
+
+            // El script del filtro: normaliza acentos en ambos lados (puedes
+            // escribir "ingles" y casa con "inglés") y busca sobre TODO el
+            // texto visible de cada tarjeta (título, techs, requisitos,
+            // resumen, recomendación, empresa, localización).
+            sb.Append("""
+                <script>
+                (function () {
+                  var norm = function (s) {
+                    return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                  };
+                  var cards = Array.prototype.slice.call(document.querySelectorAll('.card'));
+                  var excludeInput = document.getElementById('filter-exclude');
+                  var requireInput = document.getElementById('filter-require');
+                  var chipsBox = document.getElementById('filter-chips');
+                  var countBox = document.getElementById('filter-count');
+                  if (!excludeInput || cards.length === 0) { return; }
+
+                  var excludedChips = {};
+
+                  var parseTerms = function (value) {
+                    return value.split(',')
+                      .map(function (t) { return norm(t.trim()); })
+                      .filter(function (t) { return t.length > 0; });
+                  };
+
+                  var apply = function () {
+                    var exclude = parseTerms(excludeInput.value);
+                    for (var key in excludedChips) { if (excludedChips[key]) { exclude.push(key); } }
+                    var require = parseTerms(requireInput.value);
+                    var visible = 0;
+
+                    cards.forEach(function (card) {
+                      var text = norm(card.textContent);
+                      var hide =
+                        exclude.some(function (t) { return text.indexOf(t) !== -1; }) ||
+                        require.some(function (t) { return text.indexOf(t) === -1; });
+                      card.classList.toggle('hidden', hide);
+                      if (!hide) { visible++; }
+                    });
+
+                    countBox.textContent = 'Mostrando ' + visible + ' de ' + cards.length + ' ofertas.';
+                  };
+
+                  // Chips con las techs detectadas por la IA (las más frecuentes):
+                  // clic = excluir ofertas que la mencionen, otro clic = quitar.
+                  var freq = {};
+                  cards.forEach(function (card) {
+                    (card.getAttribute('data-techs') || '').split(',').forEach(function (tech) {
+                      var label = tech.trim();
+                      if (!label) { return; }
+                      var key = norm(label);
+                      if (!freq[key]) { freq[key] = { label: label, count: 0 }; }
+                      freq[key].count++;
+                    });
+                  });
+                  Object.keys(freq)
+                    .sort(function (a, b) { return freq[b].count - freq[a].count; })
+                    .slice(0, 15)
+                    .forEach(function (key) {
+                      var chip = document.createElement('span');
+                      chip.className = 'chip';
+                      chip.textContent = freq[key].label + ' (' + freq[key].count + ')';
+                      chip.title = 'Clic para excluir ofertas que mencionen esta tecnología';
+                      chip.addEventListener('click', function () {
+                        excludedChips[key] = !excludedChips[key];
+                        chip.classList.toggle('active', !!excludedChips[key]);
+                        apply();
+                      });
+                      chipsBox.appendChild(chip);
+                    });
+
+                  excludeInput.addEventListener('input', apply);
+                  requireInput.addEventListener('input', apply);
+                  apply();
+                })();
+                </script>
+                """);
 
             sb.Append("</body></html>");
             return sb.ToString();
