@@ -22,15 +22,23 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
 ## Qué hace el pipeline diario
 
 1. **Busca** en paralelo en todas las fuentes activas (Adzuna, Greenhouse,
-   Lever — InfoJobs pendiente de OAuth2).
-2. **Deduplica** exacto por `(ExternalId, SourceProvider)` y semántico por
+   Lever, JSearch, Jooble — InfoJobs pendiente de OAuth2) con las keywords
+   del perfil.
+2. **Filtra por ubicación** en dos pasos: primero país (España o remoto sin
+   especificar), después desplazamiento — el remoto pasa siempre (prioridad
+   máxima); híbrido/presencial solo si su localización es compatible con la
+   ciudad y zonas del perfil (los municipios excluidos se descartan antes de
+   gastar análisis de IA).
+3. **Deduplica** exacto por `(ExternalId, SourceProvider)` y semántico por
    similitud coseno de embeddings (Ollama) contra ofertas recientes de la
    misma empresa.
-3. **Analiza** cada oferta nueva con Claude Haiku contra el perfil del
-   candidato (resumen, seniority, techs, pros/contras, recomendación).
-4. **Puntúa** (modo de trabajo, cliente final vs. consultora, salario, stack
-   conocido/excluido) y genera el **informe HTML** con el top 15.
-5. **Envía** el informe por email (MailKit/SMTP) si hay ofertas en el top.
+4. **Analiza** cada oferta nueva con IA (Claude Haiku u Ollama local) contra
+   el perfil del candidato (resumen, seniority, techs, pros/contras,
+   recomendación).
+5. **Puntúa** (modo de trabajo/zona, cliente final vs. consultora, salario,
+   stack con pesos 0-10, techs excluidas, calidad de la información) y genera
+   el **informe HTML** con el top 15.
+6. **Envía** el informe por email (MailKit/SMTP) si hay ofertas en el top.
 
 ## Estructura del repositorio
 
@@ -79,6 +87,35 @@ dotnet user-secrets set "Email:To" "..." --project src/JobHunter.Api
 Secciones configurables: `Anthropic`, `Adzuna`, `InfoJobs` (sin implementar
 todavía), `TargetCompanies:{Greenhouse,Lever}` (board tokens, no son
 secretos), `Ollama`, `Email`, `Schedule:CronExpression`.
+
+### Perfil personal (`appsettings.Local.json`)
+
+Las preferencias del candidato — tecnologías con su peso 0-10, tecnologías
+excluidas, ciudad y zonas para el filtro de desplazamiento, keywords de
+búsqueda, salario — viven en `src/JobHunter.Api/appsettings.Local.json`.
+Ese fichero está en `.gitignore`: **es privado y no se sube al repositorio**.
+
+Para crear el tuyo, copia la plantilla comentada y rellénala con tu perfil:
+
+```powershell
+Copy-Item src/JobHunter.Api/appsettings.Local.template.json src/JobHunter.Api/appsettings.Local.json
+```
+
+Cada campo está explicado en la propia plantilla
+([appsettings.Local.template.json](src/JobHunter.Api/appsettings.Local.template.json)).
+Resumen del modelo de puntuación/filtrado que alimenta:
+
+- **`TechWeights`** — escala 0-10 por tecnología (8-10 experiencia alta,
+  4-7 media, 1-3 básica). Cada tech presente en la oferta suma su peso
+  (tope +40). Las de `ExcludedTechs` restan fuerte (-12 por señal, tope -36).
+- **Ubicación** — remoto 100% pasa siempre y puntúa el máximo (+30);
+  híbrido solo si la localización menciona `City` o una `PreferredZones`
+  (+15, +5 si es zona preferida) y no menciona una `ExcludedAreas`;
+  presencial igual pero penalizado (-10). Lo que no cumple se descarta
+  antes del análisis de IA.
+
+Si no existe `appsettings.Local.json`, la aplicación arranca con un perfil
+de ejemplo genérico (backend .NET) definido en `UserProfile.CreateDefault()`.
 
 ## Arrancar en local
 

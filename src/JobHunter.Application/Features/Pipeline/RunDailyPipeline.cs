@@ -27,15 +27,18 @@ public static partial class RunDailyPipeline
     {
         private const float DuplicateThreshold = 0.92f;
 
-        // Keywords deliberadamente de BACKEND: el candidato es backend puro.
-        // Se mantienen 3 para no agotar la cuota gratuita de JSearch (200
-        // peticiones/mes, 1 por keyword al día ≈ 90/mes).
-        private static readonly SearchFilter DefaultFilter = new(
-            Keywords: ["backend .NET", "C# backend developer", "desarrollador backend .NET"],
-            Location: "España",
+        // Fallback si el perfil no define keywords: sin ellas no habría
+        // búsqueda. Pocas y de backend para no agotar la cuota gratuita de
+        // JSearch (200 peticiones/mes, 1 por keyword al día ≈ 90/mes).
+        private static readonly string[] FallbackKeywords =
+            ["backend .NET", "C# backend developer", "desarrollador backend .NET"];
+
+        private SearchFilter BuildSearchFilter() => new(
+            Keywords: profile.SearchKeywords is { Length: > 0 } ? profile.SearchKeywords : FallbackKeywords,
+            Location: profile.SearchLocation,
             WorkMode: null,
             MinSalary: null,
-            MaxResults: 50);
+            MaxResults: profile.MaxResultsPerProvider);
 
         public async Task<DailyReport> Handle(Command request, CancellationToken cancellationToken)
         {
@@ -52,8 +55,14 @@ public static partial class RunDailyPipeline
             logger.LogInformation("Filtro de ubicación: {Kept}/{Total} compatibles con España/remoto.",
                 localOffers.Count, found.Count);
 
+            // ── 1c. FILTRAR POR DESPLAZAMIENTO (remoto pasa; híbrido/presencial
+            //        solo si son conmutables según el perfil) ─────────────
+            var commutableOffers = CommuteFilter.Apply(localOffers, profile);
+            logger.LogInformation("Filtro de desplazamiento: {Kept}/{Total} remotas o conmutables.",
+                commutableOffers.Count, localOffers.Count);
+
             // ── 2. DEDUP EXACTO + guardar nuevas ────────────────────────
-            var newOffers = await SaveNewOffersAsync(localOffers, cancellationToken);
+            var newOffers = await SaveNewOffersAsync(commutableOffers, cancellationToken);
             report.TotalNew = newOffers.Count;
 
             // ── 3. DEDUP SEMÁNTICO (embeddings de Ollama) ───────────────
@@ -78,16 +87,17 @@ public static partial class RunDailyPipeline
 
         private async Task<List<JobOffer>> SearchAllAsync(CancellationToken ct)
         {
-            var tasks = providers.Select(p => SearchSafeAsync(p, ct));
+            var filter = BuildSearchFilter();
+            var tasks = providers.Select(p => SearchSafeAsync(p, filter, ct));
             var results = await Task.WhenAll(tasks);
             return [.. results.SelectMany(r => r)];
         }
 
-        private async Task<IReadOnlyList<JobOffer>> SearchSafeAsync(IJobProvider provider, CancellationToken ct)
+        private async Task<IReadOnlyList<JobOffer>> SearchSafeAsync(IJobProvider provider, SearchFilter filter, CancellationToken ct)
         {
             try
             {
-                return await provider.SearchAsync(DefaultFilter, ct);
+                return await provider.SearchAsync(filter, ct);
             }
             catch (Exception ex)
             {

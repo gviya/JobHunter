@@ -23,6 +23,11 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    // Configuración personal PRIVADA (perfil del candidato, filtros de
+    // ubicación, pesos de tecnologías...). El fichero está en .gitignore;
+    // hay un ejemplo público en appsettings.Local.template.json.
+    builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+
     // Las BD SQLite viven en ./data — hay que crear la carpeta antes de que
     // EF o Hangfire intenten abrir los ficheros.
     Directory.CreateDirectory("data");
@@ -80,6 +85,14 @@ try
     });
 
     app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+
+    // Traza qué perfil se ha cargado: permite detectar de un vistazo si se
+    // está usando appsettings.Local.json o el perfil de ejemplo por defecto.
+    var perfil = app.Services.GetRequiredService<JobHunter.Domain.Entities.UserProfile>();
+    Log.Information(
+        "Perfil del candidato: {Techs} techs con peso, {Excluidas} excluidas, ciudad \"{Ciudad}\", {Zonas} zonas preferidas, {Areas} áreas excluidas.",
+        perfil.TechWeights.Count, perfil.ExcludedTechs.Length, perfil.City,
+        perfil.PreferredZones.Length, perfil.ExcludedAreas.Length);
 
     Log.Information("JobHunter AI arrancando en entorno {Entorno}", app.Environment.EnvironmentName);
 

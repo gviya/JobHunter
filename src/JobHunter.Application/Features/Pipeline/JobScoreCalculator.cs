@@ -9,10 +9,14 @@ namespace JobHunter.Application.Features.Pipeline;
 /// de forma aislada.
 ///
 /// Pesos:
-///  - Remoto: Remote +30; Híbrido en Madrid +15, fuera -5; OnSite -20.
+///  - Ubicación: Remote +30 (prioridad máxima); Híbrido conmutable +15 (+5
+///    si la zona es de las preferidas del perfil), no conmutable -25;
+///    OnSite conmutable -10, no conmutable -30. (Los no conmutables no
+///    deberían llegar aquí: CommuteFilter los descarta antes.)
 ///  - Cliente final +20 / consultora -10.
 ///  - Salario (SalaryMax): ≥70k +25, ≥60k +20, ≥50k +15, ≥40k +5, &lt;40k -10, null -5.
-///  - Techs conocidas: +3 por coincidencia (máx +15).
+///  - Techs conocidas: cada tech del perfil (TechWeights, escala 0-10) que
+///    aparezca en la oferta suma su peso; el total se capa en +40.
 ///  - Techs excluidas (frontend/otros lenguajes): -12 por cada una distinta
 ///    (mín -36). El candidato es backend puro y apenas sabe frontend, así que
 ///    una oferta con varias señales de front se hunde de verdad.
@@ -22,9 +26,12 @@ namespace JobHunter.Application.Features.Pipeline;
 /// </summary>
 internal static class JobScoreCalculator
 {
+    /// <summary>Tope de la suma de pesos de techs conocidas (~4 techs fuertes).</summary>
+    private const int TechMatchCap = 40;
+
     public static JobScore Calculate(JobOffer offer, AiAnalysisResult analysis, UserProfile profile)
     {
-        var remote = RemoteScore(offer);
+        var remote = LocationScore(offer, profile);
         var clientFinal = offer.IsClientFinal ? 20 : -10;
         var salary = SalaryScore(offer.SalaryMax);
         var tech = TechScore(offer, analysis, profile);
@@ -49,16 +56,15 @@ internal static class JobScoreCalculator
         };
     }
 
-    private static int RemoteScore(JobOffer offer) => offer.WorkMode switch
+    private static int LocationScore(JobOffer offer, UserProfile profile) => offer.WorkMode switch
     {
         WorkMode.Remote => 30,
-        WorkMode.Hybrid => IsMadrid(offer.Location) ? 15 : -5,
-        WorkMode.OnSite => -20,
+        WorkMode.Hybrid => CommuteFilter.IsCommutable(offer.Location, profile)
+            ? 15 + (CommuteFilter.InPreferredZone(offer.Location, profile) ? 5 : 0)
+            : -25,
+        WorkMode.OnSite => CommuteFilter.IsCommutable(offer.Location, profile) ? -10 : -30,
         _ => 0,
     };
-
-    private static bool IsMadrid(string? location)
-        => location?.Contains("Madrid", StringComparison.OrdinalIgnoreCase) ?? false;
 
     private static int SalaryScore(decimal? salaryMax) => salaryMax switch
     {
@@ -80,8 +86,14 @@ internal static class JobScoreCalculator
             }
             .Where(s => !string.IsNullOrWhiteSpace(s)));
 
-        var known = profile.KnownTechs.Count(t => haystack.Contains(t, StringComparison.OrdinalIgnoreCase));
-        var score = Math.Min(known * 3, 15);
+        // Suma el peso (0-10) de cada tech del perfil presente en la oferta,
+        // con tope: una oferta que clava el stack no necesita 10 matches para
+        // puntuar el máximo. Match por token (no substring) para que claves
+        // cortas ("RAG", "OIDC", "n8n") no coincidan dentro de otras palabras.
+        var matchedWeight = profile.TechWeights
+            .Where(kv => kv.Value > 0 && MentionsTech(haystack, kv.Key))
+            .Sum(kv => kv.Value);
+        var score = Math.Min(matchedWeight, TechMatchCap);
 
         // Cada tech excluida DISTINTA que aparezca resta: cuantas más señales
         // de frontend/otro stack, más se hunde la oferta. Se usa un match por
@@ -114,17 +126,22 @@ internal static class JobScoreCalculator
     /// True si <paramref name="tech"/> aparece en el texto como token propio y
     /// no incrustado dentro de otra palabra. Evita el falso positivo clásico
     /// "Java" ⊂ "JavaScript" (o "React" ⊂ "Preact"): se exige que los
-    /// caracteres inmediatamente anterior y posterior no sean letras.
+    /// caracteres inmediatamente anterior y posterior no sean letras. El
+    /// límite solo se exige en los extremos del término que son letras: así
+    /// ".NET" (empieza por '.') sí coincide dentro de "ASP.NET", y "C#"
+    /// (termina en '#') coincide vaya seguido de lo que vaya.
     /// </summary>
     private static bool MentionsTech(string haystack, string tech)
     {
+        var checkBefore = char.IsLetter(tech[0]);
+        var checkAfter = char.IsLetter(tech[^1]);
         var index = haystack.IndexOf(tech, StringComparison.OrdinalIgnoreCase);
 
         while (index >= 0)
         {
-            var beforeOk = index == 0 || !char.IsLetter(haystack[index - 1]);
+            var beforeOk = !checkBefore || index == 0 || !char.IsLetter(haystack[index - 1]);
             var afterIndex = index + tech.Length;
-            var afterOk = afterIndex >= haystack.Length || !char.IsLetter(haystack[afterIndex]);
+            var afterOk = !checkAfter || afterIndex >= haystack.Length || !char.IsLetter(haystack[afterIndex]);
 
             if (beforeOk && afterOk)
             {

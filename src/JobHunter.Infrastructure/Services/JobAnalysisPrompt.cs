@@ -26,7 +26,9 @@ internal static class JobAnalysisPrompt
         sb.AppendLine("Eres un asistente que evalúa ofertas de empleo para un desarrollador BACKEND .NET.");
         sb.AppendLine();
         sb.AppendLine("PERFIL DEL CANDIDATO:");
-        sb.AppendLine($"- Tecnologías que domina: {string.Join(", ", profile.KnownTechs)}");
+        AppendTechTier(sb, "- Tecnologías que domina (experiencia alta)", profile, min: 8, max: 10);
+        AppendTechTier(sb, "- Tecnologías con experiencia media", profile, min: 4, max: 7);
+        AppendTechTier(sb, "- Tecnologías con conocimiento básico", profile, min: 1, max: 3);
         sb.AppendLine($"- Tecnologías que desea aprender: {string.Join(", ", profile.DesiredTechs)}");
         sb.AppendLine($"- Tecnologías excluyentes (no quiere): {string.Join(", ", profile.ExcludedTechs)}");
         sb.AppendLine($"- Modo de trabajo preferido: {profile.PreferredWorkMode}");
@@ -71,6 +73,24 @@ internal static class JobAnalysisPrompt
         sb.AppendLine("  lista vacía en vez de inventar requisitos.");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Añade una línea con las techs del perfil cuyo peso (escala 0-10) cae
+    /// en el rango dado. Si el rango queda vacío no se escribe nada.
+    /// </summary>
+    private static void AppendTechTier(StringBuilder sb, string label, UserProfile profile, int min, int max)
+    {
+        var techs = profile.TechWeights
+            .Where(kv => kv.Value >= min && kv.Value <= max)
+            .OrderByDescending(kv => kv.Value)
+            .Select(kv => kv.Key)
+            .ToArray();
+
+        if (techs.Length > 0)
+        {
+            sb.AppendLine($"{label}: {string.Join(", ", techs)}");
+        }
     }
 
     public static bool TryParse(string content, out AiAnalysisResult result)

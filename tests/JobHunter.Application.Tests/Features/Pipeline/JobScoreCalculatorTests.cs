@@ -30,6 +30,21 @@ public sealed class JobScoreCalculatorTests
         de un proyecto ambicioso con impacto real, queremos conocerte.
         """;
 
+    // Perfil de ejemplo (pesos: C# 8, .NET 8, Docker 6...) con el filtro de
+    // ciudad activado, como el que usaría un candidato real de Madrid.
+    private static UserProfile MadridProfile()
+    {
+        var defaults = UserProfile.CreateDefault();
+        return new UserProfile
+        {
+            TechWeights = defaults.TechWeights,
+            ExcludedTechs = defaults.ExcludedTechs,
+            City = "Madrid",
+            PreferredZones = ["Hortaleza", "28033"],
+            ExcludedAreas = ["Alcobendas", "Getafe"],
+        };
+    }
+
     private static AiAnalysisResult Analysis(int compatibility, string[]? importantTechs = null) =>
         new(
             Summary: "Resumen",
@@ -57,18 +72,18 @@ public sealed class JobScoreCalculatorTests
             SalaryMax = 60000m,
         };
 
-        var score = JobScoreCalculator.Calculate(offer, Analysis(80), new UserProfile());
+        var score = JobScoreCalculator.Calculate(offer, Analysis(80), MadridProfile());
 
         score.RemoteScore.Should().Be(30);           // Remote
         score.ClientFinalScore.Should().Be(20);      // cliente final
         score.SalaryScore.Should().Be(20);           // SalaryMax >= 60k
-        score.TechScore.Should().Be(9);              // C#, .NET, Docker => 3 * 3
+        score.TechScore.Should().Be(22);             // C# (8) + .NET (8) + Docker (6)
         score.InfoQualityScore.Should().Be(8);       // descripción larga y detallada
         score.CompatibilityScore.Should().Be(80);
 
-        // TotalScore = Compatibility/2 + remote + clientFinal + salary + tech + info
-        //            = 40 + 30 + 20 + 20 + 9 + 8 = 127
-        score.TotalScore.Should().Be(127);
+        // TotalScore = Compatibility/2 + location + clientFinal + salary + tech + info
+        //            = 40 + 30 + 20 + 20 + 22 + 8 = 140
+        score.TotalScore.Should().Be(140);
     }
 
     [Fact]
@@ -88,17 +103,17 @@ public sealed class JobScoreCalculatorTests
             SalaryMax = null,
         };
 
-        var score = JobScoreCalculator.Calculate(offer, Analysis(40, ["Angular", "React"]), new UserProfile());
+        var score = JobScoreCalculator.Calculate(offer, Analysis(40, ["Angular", "React"]), MadridProfile());
 
-        score.RemoteScore.Should().Be(-5);        // híbrido fuera de Madrid
+        score.RemoteScore.Should().Be(-25);       // híbrido no conmutable (fuera de Madrid)
         score.ClientFinalScore.Should().Be(-10);  // consultora
         score.SalaryScore.Should().Be(-5);        // salario null
-        // .NET conocida (+3); excluidas distintas = Fullstack, Angular, React
-        // => -min(3*12, 36) = -36  =>  3 - 36 = -33
-        score.TechScore.Should().Be(-33);
+        // .NET conocida (+8); excluidas distintas = Fullstack, Angular, React
+        // => -min(3*12, 36) = -36  =>  8 - 36 = -28
+        score.TechScore.Should().Be(-28);
         score.InfoQualityScore.Should().Be(-25);  // descripción muy corta
-        // Total = 20 + (-5) + (-10) + (-5) + (-33) + (-25) = -58
-        score.TotalScore.Should().Be(-58);
+        // Total = 20 + (-25) + (-10) + (-5) + (-28) + (-25) = -73
+        score.TotalScore.Should().Be(-73);
     }
 
     [Fact]
@@ -117,7 +132,7 @@ public sealed class JobScoreCalculatorTests
             SalaryMax = 55000m,
         };
 
-        var score = JobScoreCalculator.Calculate(offer, Analysis(70), new UserProfile());
+        var score = JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfile());
 
         score.InfoQualityScore.Should().Be(-25);  // sin descripción => máxima penalización
         // Total = 35 + 30 + 20 + 15 + 0 + (-25) = 75
@@ -140,11 +155,51 @@ public sealed class JobScoreCalculatorTests
             SalaryMax = 55000m,
         };
 
-        var score = JobScoreCalculator.Calculate(offer, Analysis(70), new UserProfile());
+        var score = JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfile());
 
         // "JavaScript" NO debe disparar la exclusión de "Java": solo cuenta
-        // .NET como conocida (+3), sin penalización de tech excluida.
-        score.TechScore.Should().Be(3);
+        // .NET como conocida (+8), sin penalización de tech excluida.
+        score.TechScore.Should().Be(8);
+    }
+
+    [Fact]
+    public void Calculate_HibridoEnZonaPreferida_RecibeBonusSobreElHibridoNormal()
+    {
+        var enHortaleza = new JobOffer
+        {
+            ExternalId = "6",
+            SourceProvider = "Test",
+            Title = "Backend Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/6",
+            WorkMode = WorkMode.Hybrid,
+            Location = "Hortaleza, Madrid",
+        };
+
+        var score = JobScoreCalculator.Calculate(enHortaleza, Analysis(70), MadridProfile());
+
+        score.RemoteScore.Should().Be(20);  // híbrido conmutable (15) + zona preferida (5)
+    }
+
+    [Fact]
+    public void Calculate_SumaDePesosDeTechs_SeCapaEnCuarenta()
+    {
+        var offer = new JobOffer
+        {
+            ExternalId = "7",
+            SourceProvider = "Test",
+            Title = "Backend .NET",
+            CompanyName = "Acme",
+            Url = "https://example.com/7",
+            // Menciona C# (8), .NET (8), ASP.NET Core (7... y .NET dentro ya contado),
+            // Entity Framework (7), SQL Server (7), Docker (6), REST (6): suma > 40.
+            Description = "C# y .NET con ASP.NET Core, Entity Framework, SQL Server, Docker y APIs REST.",
+            WorkMode = WorkMode.Remote,
+        };
+
+        var score = JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfile());
+
+        score.TechScore.Should().Be(40);
     }
 
     [Fact]
@@ -173,7 +228,7 @@ public sealed class JobScoreCalculatorTests
             Recommendation: "Aplicar",
             Requirements: ["3 años con C#", "Experiencia con Docker", "Inglés B2"]);
 
-        var score = JobScoreCalculator.Calculate(offer, analysis, new UserProfile());
+        var score = JobScoreCalculator.Calculate(offer, analysis, MadridProfile());
 
         score.AiRequirements.Should().Be("3 años con C# · Experiencia con Docker · Inglés B2");
     }

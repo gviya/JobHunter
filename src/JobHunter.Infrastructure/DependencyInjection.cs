@@ -29,8 +29,15 @@ public static class DependencyInjection
         AddProviders(services);
         AddExternalServices(services, configuration);
 
-        // El perfil del candidato (valores por defecto) como singleton.
-        services.AddSingleton<UserProfile>();
+        // El perfil del candidato como singleton. Se lee de la sección
+        // "UserProfile" (típicamente appsettings.Local.json, que está en
+        // .gitignore: las preferencias personales no van al repositorio).
+        // Sin sección se usa el perfil de ejemplo genérico.
+        var profileSection = configuration.GetSection("UserProfile");
+        var profile = profileSection.Exists()
+            ? profileSection.Get<UserProfile>() ?? UserProfile.CreateDefault()
+            : UserProfile.CreateDefault();
+        services.AddSingleton(profile);
 
         // Job orquestado por Hangfire.
         services.AddScoped<DailySearchJob>();
