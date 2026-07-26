@@ -90,6 +90,28 @@ Secciones configurables: `Anthropic`, `Adzuna`, `InfoJobs` (sin implementar
 todavía), `TargetCompanies:{Greenhouse,Lever}` (board tokens, no son
 secretos), `Ollama`, `Email`, `Schedule:CronExpression`.
 
+### Seguridad de los endpoints
+
+`/jobs/run-now` (dispara el pipeline, que consume cuota de APIs de pago),
+`/reports/latest` (expone el informe con datos personales) y el dashboard de
+Hangfire (`/hangfire`) están protegidos:
+
+- **Peticiones locales** (loopback / misma máquina): siempre permitidas — el
+  uso normal en local no requiere configurar nada.
+- **Desde fuera de la máquina**: hay que aportar `Security:ApiKey`. Los
+  endpoints la esperan en la cabecera `X-Api-Key`; el dashboard, al abrirse en
+  el navegador, la acepta como query string `?apiKey=...`.
+- Si no se configura ninguna clave, **solo** se admite acceso local: el
+  servicio nunca queda abierto por accidente al exponerlo en red.
+
+```powershell
+dotnet user-secrets set "Security:ApiKey" "una-clave-larga-aleatoria" --project src/JobHunter.Api
+```
+
+`/jobs/run-now` además está limitado a 3 ejecuciones/minuto (rate limiting).
+Fuera de `Development` se fuerza HTTPS (redirección + HSTS); restringe también
+`AllowedHosts` al host real en producción.
+
 ### Perfil personal (`appsettings.Local.json`)
 
 Las preferencias del candidato — tecnologías con su peso 0-10, tecnologías

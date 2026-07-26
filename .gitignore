@@ -38,6 +38,10 @@ appsettings.Local.json
 logs/
 *.log
 
+# Informe HTML generado localmente (contiene datos personales de la búsqueda)
+informe.html
+informe*.html
+
 # NuGet
 *.nupkg
 packages/

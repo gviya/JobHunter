@@ -68,8 +68,14 @@ public static class DependencyInjection
 
     private static void AddProviders(IServiceCollection services)
     {
-        // IHttpClientFactory para los providers que crean clientes ad hoc.
-        services.AddHttpClient();
+        // IHttpClientFactory para los providers que crean clientes ad hoc
+        // (todos usan el cliente por defecto vía CreateClient()). Se le añade
+        // resiliencia estándar (timeout total, reintentos con backoff y circuit
+        // breaker) porque son APIs de terceros por Internet: un pico de latencia
+        // o un 503 transitorio no debe dejar colgado ni tumbar el pipeline.
+        // Ollama y Claude quedan fuera: son clientes tipados con su propio
+        // nombre y sus timeouts largos (generación local / LLM).
+        services.AddHttpClient(Options.DefaultName).AddStandardResilienceHandler();
 
         services.AddScoped<IJobProvider, AdzunaProvider>();
         services.AddScoped<IJobProvider, GreenhouseProvider>();

@@ -1,0 +1,32 @@
+<!--
+  Tests de la capa de PRESENTACIÓN: verifican la lógica de autorización de
+  los endpoints/dashboard (RequestAuthorizer) sin levantar un servidor real.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- DefaultHttpContext y el tipado de ASP.NET Core para los tests -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\JobHunter.Api\JobHunter.Api.csproj" />
+  </ItemGroup>
+
+</Project>

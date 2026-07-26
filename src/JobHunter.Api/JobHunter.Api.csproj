@@ -19,6 +19,11 @@
     <ProjectReference Include="..\JobHunter.Infrastructure\JobHunter.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Los tests instancian los filtros de seguridad internal (auth). -->
+    <InternalsVisibleTo Include="JobHunter.Api.Tests" />
+  </ItemGroup>
+
   <ItemGroup Label="Scheduler (Hangfire server + dashboard)">
     <PackageReference Include="Hangfire.AspNetCore" />
     <PackageReference Include="Hangfire.Storage.SQLite" />

@@ -6,7 +6,7 @@ namespace JobHunter.Application.Tests.Features.Pipeline;
 
 public sealed class ReportHtmlTests
 {
-    private static JobOffer OfferWithScore(string title, string techList)
+    private static JobOffer OfferWithScore(string title, string techList, string url = "https://example.com/1")
     {
         var offer = new JobOffer
         {
@@ -14,7 +14,7 @@ public sealed class ReportHtmlTests
             SourceProvider = "Test",
             Title = title,
             CompanyName = "Acme",
-            Url = "https://example.com/1",
+            Url = url,
             WorkMode = WorkMode.Remote,
         };
         offer.Score = new JobScore
@@ -45,6 +45,40 @@ public sealed class ReportHtmlTests
         html.Should().Contain("data-techs=\"C#, .NET, SQL Server\"");
         html.Should().Contain("<script>");
         html.Should().Contain("normalize('NFD')");
+    }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("JavaScript:alert(document.cookie)")]
+    [InlineData("data:text/html,<script>alert(1)</script>")]
+    [InlineData("not a url")]
+    public void BuildHtml_UrlConEsquemaPeligroso_SeNeutralizaAAlmohadilla(string maliciousUrl)
+    {
+        var report = new DailyReport
+        {
+            TopOffers = [OfferWithScore("Backend .NET", "C#", maliciousUrl)],
+        };
+
+        var html = RunDailyPipeline.Handler.BuildHtml(report);
+
+        // Solo se admiten http/https absolutas: cualquier otro esquema (que
+        // podría ejecutar código al pinchar el enlace) se degrada a "#".
+        html.Should().Contain("href=\"#\"");
+        html.Should().NotContain("javascript:");
+        html.Should().NotContain("data:text/html");
+    }
+
+    [Fact]
+    public void BuildHtml_UrlHttpsLegitima_SeConservaEnElHref()
+    {
+        var report = new DailyReport
+        {
+            TopOffers = [OfferWithScore("Backend .NET", "C#", "https://example.com/oferta-42")],
+        };
+
+        var html = RunDailyPipeline.Handler.BuildHtml(report);
+
+        html.Should().Contain("href=\"https://example.com/oferta-42\"");
     }
 
     [Fact]

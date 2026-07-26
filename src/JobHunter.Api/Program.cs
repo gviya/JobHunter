@@ -1,11 +1,14 @@
+using System.Threading.RateLimiting;
 using Hangfire;
 using Hangfire.Storage.SQLite;
+using JobHunter.Api.Security;
 using JobHunter.Application;
 using JobHunter.Application.Features.Reports;
 using JobHunter.Infrastructure;
 using JobHunter.Infrastructure.Jobs;
 using JobHunter.Infrastructure.Persistence;
 using MediatR;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -41,6 +44,26 @@ try
     builder.Services.AddApplication();
     builder.Services.AddInfrastructure(builder.Configuration);
 
+    // ── Transversales de la API ─────────────────────────────────────
+    // Respuestas de error uniformes (RFC 7807) para las excepciones no
+    // controladas que puedan escapar de los endpoints.
+    builder.Services.AddProblemDetails();
+
+    // Rate limiting: /jobs/run-now dispara un pipeline caro (búsqueda +
+    // embeddings + IA) que consume cuota de APIs de pago. Se limita a unas
+    // pocas ejecuciones por minuto para frenar abusos o disparos accidentales.
+    const string RunNowPolicy = "run-now";
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddFixedWindowLimiter(RunNowPolicy, limiter =>
+        {
+            limiter.PermitLimit = 3;
+            limiter.Window = TimeSpan.FromMinutes(1);
+            limiter.QueueLimit = 0;
+        });
+    });
+
     // ── Hangfire (scheduler) sobre SQLite ───────────────────────────
     var hangfireDb = SqlitePath(builder.Configuration.GetConnectionString("Hangfire"), "data/hangfire.db");
     builder.Services.AddHangfire(config => config
@@ -52,6 +75,21 @@ try
 
     var app = builder.Build();
 
+    // ── Middleware transversal ──────────────────────────────────────
+    // Convierte cualquier excepción no controlada en un ProblemDetails
+    // (sin filtrar el stack trace al cliente).
+    app.UseExceptionHandler();
+
+    // Fuera de desarrollo: forzar HTTPS y activar HSTS. En local el perfil
+    // http no tiene puerto https, así que se omite para no redirigir a la nada.
+    if (!app.Environment.IsDevelopment())
+    {
+        app.UseHsts();
+        app.UseHttpsRedirection();
+    }
+
+    app.UseRateLimiter();
+
     // ── Migración automática al arrancar ────────────────────────────
     await using (var scope = app.Services.CreateAsyncScope())
     {
@@ -59,8 +97,11 @@ try
         await db.Database.MigrateAsync();
     }
 
-    // ── Dashboard de Hangfire ───────────────────────────────────────
-    app.UseHangfireDashboard("/hangfire");
+    // ── Dashboard de Hangfire (protegido) ───────────────────────────
+    app.UseHangfireDashboard("/hangfire", new DashboardOptions
+    {
+        Authorization = [new HangfireDashboardAuthorizationFilter(app.Configuration)],
+    });
 
     // ── Job recurrente diario ───────────────────────────────────────
     var cron = app.Configuration["Schedule:CronExpression"] ?? "0 8 * * *";
@@ -70,11 +111,16 @@ try
         cron);
 
     // ── Endpoints ───────────────────────────────────────────────────
+    // /jobs/run-now y /reports/latest son sensibles (disparan gasto o exponen
+    // datos personales): se protegen con ApiKeyEndpointFilter (local libre,
+    // remoto con X-Api-Key). /health queda abierto para healthchecks.
     app.MapPost("/jobs/run-now", (IBackgroundJobClient jobs) =>
     {
         var id = jobs.Enqueue<DailySearchJob>(job => job.RunAsync(CancellationToken.None));
         return Results.Accepted($"/hangfire/jobs/details/{id}", new { jobId = id });
-    });
+    })
+    .AddEndpointFilter<ApiKeyEndpointFilter>()
+    .RequireRateLimiting(RunNowPolicy);
 
     app.MapGet("/reports/latest", async (ISender sender) =>
     {
@@ -82,7 +128,8 @@ try
         return report is null
             ? Results.NotFound(new { message = "Todavía no hay ningún informe." })
             : Results.Content(report.HtmlContent, "text/html");
-    });
+    })
+    .AddEndpointFilter<ApiKeyEndpointFilter>();
 
     app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 

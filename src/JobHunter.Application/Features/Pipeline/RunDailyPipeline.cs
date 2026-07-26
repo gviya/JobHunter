@@ -328,7 +328,7 @@ public static partial class RunDailyPipeline
                       <p>{Encode(score?.AiSummary ?? "")}</p>
                       {requirements}
                       <p><i>{Encode(score?.AiRecommendation ?? "")}</i></p>
-                      <a href="{Encode(offer.Url)}">Ver oferta →</a>
+                      <a href="{SafeHref(offer.Url)}">Ver oferta →</a>
                     </div>
                     """);
             }
@@ -431,5 +431,22 @@ public static partial class RunDailyPipeline
 
         private static string Encode(string value) =>
             System.Net.WebUtility.HtmlEncode(value);
+
+        // Las URLs de las ofertas vienen de terceros (agregadores que indexan
+        // fuentes arbitrarias): HtmlEncode NO neutraliza esquemas peligrosos
+        // como "javascript:" en un href. Solo se aceptan http/https absolutas;
+        // cualquier otra cosa se degrada a "#" para evitar XSS al abrir el
+        // informe en el navegador (/reports/latest).
+        private static string SafeHref(string? url)
+        {
+            if (!string.IsNullOrWhiteSpace(url) &&
+                Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+                (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+            {
+                return Encode(url);
+            }
+
+            return "#";
+        }
     }
 }
