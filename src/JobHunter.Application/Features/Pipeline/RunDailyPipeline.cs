@@ -244,47 +244,82 @@ public static partial class RunDailyPipeline
         {
             var sb = new StringBuilder();
 
+            // Diseño pensado para los DOS destinos del informe: clientes de
+            // email (CSS en <head>, sin recursos externos, degradación
+            // aceptable si el cliente ignora flex) y navegador (/reports/latest,
+            // donde además corre el filtro interactivo). Colores sobre tokens
+            // de tinta/superficie neutros; el color de estado (verde/ámbar)
+            // nunca va solo: siempre acompaña a un número o etiqueta.
             sb.Append("""
                 <!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <title>JobHunter AI — informe diario</title>
                 <style>
-                  body{font-family:Segoe UI,Arial,sans-serif;background:#f4f5f7;color:#1f2933;margin:0;padding:24px}
-                  .header{background:#111827;color:#fff;padding:20px 24px;border-radius:10px}
-                  .metrics{display:flex;gap:16px;margin:16px 0;flex-wrap:wrap}
-                  .metric{background:#fff;border-radius:8px;padding:12px 18px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-                  .metric b{display:block;font-size:22px}
-                  .card{background:#fff;border-radius:10px;padding:16px 18px;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-                  .card h3{margin:0 0 6px}
-                  .stars{color:#f5a623;font-size:18px}
-                  .meta{color:#52606d;font-size:14px;margin:6px 0}
-                  .tags{color:#3b5bdb;font-size:13px}
-                  .reqs{background:#f8fafc;border-left:3px solid #3b5bdb;padding:8px 12px;margin:8px 0;font-size:13px;color:#334155}
-                  .reqs b{color:#1e293b}
-                  .src{display:inline-block;background:#eef2ff;color:#3730a3;font-size:12px;padding:2px 8px;border-radius:999px;vertical-align:middle}
-                  a{color:#2563eb;text-decoration:none}
-                  .filterbar{background:#fff;border-radius:10px;padding:14px 18px;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-                  .filterbar label{display:block;font-size:13px;color:#52606d;margin:8px 0 4px}
-                  .filterbar input{width:100%;max-width:520px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:14px;box-sizing:border-box}
-                  .chip{display:inline-block;cursor:pointer;background:#eef2ff;color:#3730a3;font-size:12px;padding:3px 10px;border-radius:999px;margin:3px 4px 0 0;user-select:none}
-                  .chip.active{background:#dc2626;color:#fff;text-decoration:line-through}
+                  body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#f9f9f7;color:#0b0b0b;margin:0;padding:20px 14px}
+                  .wrap{max-width:880px;margin:0 auto}
+                  .header{background:#111827;color:#fff;padding:22px 24px;border-radius:12px}
+                  .header h1{margin:0;font-size:22px;letter-spacing:.2px}
+                  .header .sub{color:#c3c2b7;font-size:13.5px;margin-top:4px}
+                  .metrics{display:flex;gap:12px;margin:14px 0;flex-wrap:wrap}
+                  .metric{flex:1 1 120px;background:#fcfcfb;border:1px solid rgba(11,11,11,.10);border-radius:10px;padding:12px 16px}
+                  .metric b{display:block;font-size:24px;font-weight:600;line-height:1.2}
+                  .metric span{color:#52514e;font-size:12.5px}
+                  .card{background:#fcfcfb;border:1px solid rgba(11,11,11,.10);border-radius:12px;padding:16px 18px;margin:12px 0}
+                  .cardtop{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}
+                  .card h3{margin:0;font-size:16.5px;line-height:1.35}
+                  .card h3 a{color:#0b0b0b;text-decoration:none}
+                  .card h3 a:hover{color:#1c5cab;text-decoration:underline}
+                  .scorebox{text-align:right;white-space:nowrap}
+                  .score{display:inline-block;font-size:15px;font-weight:600;padding:3px 10px;border-radius:999px}
+                  .score.high{background:rgba(12,163,12,.14);color:#006300}
+                  .score.mid{background:rgba(250,178,25,.18);color:#7a5200}
+                  .score.low{background:#f0efec;color:#52514e}
+                  .stars{color:#c98500;font-size:14px;margin-top:3px;letter-spacing:1px}
+                  .meta{color:#52514e;font-size:13.5px;margin:6px 0 10px}
+                  .rowtags{margin:0 0 6px}
+                  .tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;margin:0 5px 5px 0}
+                  .tag.mode-remote{background:rgba(12,163,12,.12);color:#006300}
+                  .tag.mode-hybrid{background:rgba(250,178,25,.18);color:#7a5200}
+                  .tag.mode-onsite{background:rgba(236,131,90,.18);color:#8c3512}
+                  .tag.mode-unknown{background:#f0efec;color:#52514e}
+                  .tag.seniority{background:rgba(42,120,214,.12);color:#1c5cab}
+                  .tag.src{background:#fcfcfb;border:1px solid rgba(11,11,11,.14);color:#52514e}
+                  .tech{display:inline-block;background:#eef2fb;color:#1c5cab;font-size:12px;padding:2px 9px;border-radius:6px;margin:0 4px 4px 0}
+                  .reqs{background:#f5f4f1;border-left:3px solid #2a78d6;border-radius:0 8px 8px 0;padding:9px 12px;margin:10px 0;font-size:13px;color:#3d3c39}
+                  .reqs b{color:#0b0b0b}
+                  .summary{margin:8px 0;font-size:14px;line-height:1.55}
+                  .reco{color:#52514e;font-size:13.5px;font-style:italic;margin:8px 0 4px}
+                  .cta{display:inline-block;margin-top:4px;font-size:13.5px;color:#1c5cab;font-weight:600;text-decoration:none}
+                  .cta:hover{text-decoration:underline}
+                  .filterbar{background:#fcfcfb;border:1px solid rgba(11,11,11,.10);border-radius:12px;padding:14px 18px;margin:12px 0}
+                  .filterbar .cols{display:flex;gap:14px;flex-wrap:wrap}
+                  .filterbar .col{flex:1 1 240px}
+                  .filterbar label{display:block;font-size:12.5px;color:#52514e;margin:2px 0 4px}
+                  .filterbar input{width:100%;padding:8px 10px;border:1px solid #c3c2b7;border-radius:8px;font-size:14px;box-sizing:border-box;background:#fff;color:#0b0b0b}
+                  .filterbar input:focus{outline:2px solid #2a78d6;outline-offset:0;border-color:#2a78d6}
+                  .chip{display:inline-block;cursor:pointer;background:#eef2fb;color:#1c5cab;font-size:12px;padding:3px 10px;border-radius:999px;margin:6px 6px 0 0;user-select:none}
+                  .chip.active{background:#d03b3b;color:#fff;text-decoration:line-through}
                   .hidden{display:none}
-                  #filter-count{color:#52606d;font-size:13px;margin-top:10px}
-                </style></head><body>
+                  #filter-count{color:#52514e;font-size:12.5px;margin-top:8px}
+                  .empty{background:#fcfcfb;border:1px dashed rgba(11,11,11,.18);border-radius:12px;padding:22px;text-align:center;color:#52514e;margin:14px 0}
+                  .foot{color:#898781;font-size:12px;text-align:center;margin:18px 0 6px}
+                </style></head><body><div class="wrap">
                 """);
 
             sb.Append($"""
                 <div class="header"><h1>JobHunter AI</h1>
-                <div>Informe del {report.GeneratedAt:yyyy-MM-dd HH:mm} UTC</div></div>
+                <div class="sub">Informe del {report.GeneratedAt:yyyy-MM-dd HH:mm} UTC · top {report.TopOffers.Count} ofertas</div></div>
                 <div class="metrics">
-                  <div class="metric"><b>{report.TotalFound}</b>encontradas</div>
-                  <div class="metric"><b>{report.TotalNew}</b>nuevas</div>
-                  <div class="metric"><b>{report.TotalDuplicates}</b>duplicadas</div>
-                  <div class="metric"><b>{report.TotalAnalyzed}</b>analizadas</div>
+                  <div class="metric"><b>{report.TotalFound}</b><span>Encontradas</span></div>
+                  <div class="metric"><b>{report.TotalNew}</b><span>Nuevas</span></div>
+                  <div class="metric"><b>{report.TotalDuplicates}</b><span>Duplicadas</span></div>
+                  <div class="metric"><b>{report.TotalAnalyzed}</b><span>Analizadas</span></div>
                 </div>
                 """);
 
             if (report.TopOffers.Count == 0)
             {
-                sb.Append("<p>No hay ofertas puntuadas todavía.</p>");
+                sb.Append("""<div class="empty">No hay ofertas puntuadas todavía.</div>""");
             }
             else
             {
@@ -293,10 +328,16 @@ public static partial class RunDailyPipeline
                 // el filtro solo funciona viendo el informe en /reports/latest.
                 sb.Append("""
                     <div class="filterbar">
-                      <label for="filter-exclude">Excluir ofertas que mencionen (separado por comas):</label>
-                      <input id="filter-exclude" type="text" placeholder="inglés, angular, java...">
-                      <label for="filter-require">Mostrar solo ofertas que mencionen:</label>
-                      <input id="filter-require" type="text" placeholder="remoto, sql server...">
+                      <div class="cols">
+                        <div class="col">
+                          <label for="filter-exclude">Excluir ofertas que mencionen (separado por comas)</label>
+                          <input id="filter-exclude" type="text" placeholder="inglés, angular, java...">
+                        </div>
+                        <div class="col">
+                          <label for="filter-require">Mostrar solo ofertas que mencionen</label>
+                          <input id="filter-require" type="text" placeholder="remoto, sql server...">
+                        </div>
+                      </div>
                       <div id="filter-chips"></div>
                       <div id="filter-count"></div>
                     </div>
@@ -306,7 +347,7 @@ public static partial class RunDailyPipeline
             foreach (var offer in report.TopOffers)
             {
                 var score = offer.Score;
-                var stars = Stars(score?.TotalScore ?? 0);
+                var total = score?.TotalScore ?? 0;
                 var salary = (offer.SalaryMin, offer.SalaryMax) switch
                 {
                     (null, null) => "salario no indicado",
@@ -315,20 +356,46 @@ public static partial class RunDailyPipeline
                     var (min, max) => $"{min:N0} – {max:N0} €",
                 };
 
+                var seniority = score?.AiSeniority is { Length: > 0 } s && s != "Unknown"
+                    ? $"""<span class="tag seniority">{Encode(s)}</span>"""
+                    : "";
+
+                var techChips = TechChips(score?.AiTechList);
+                var techRow = techChips.Length > 0 ? $"""<div class="rowtags">{techChips}</div>""" : "";
+
+                var summary = string.IsNullOrWhiteSpace(score?.AiSummary)
+                    ? ""
+                    : $"""<p class="summary">{Encode(score!.AiSummary!)}</p>""";
+
                 var requirements = string.IsNullOrWhiteSpace(score?.AiRequirements)
                     ? ""
                     : $"""<div class="reqs"><b>Requisitos que piden:</b> {Encode(score!.AiRequirements!)}</div>""";
 
+                var recommendation = string.IsNullOrWhiteSpace(score?.AiRecommendation)
+                    ? ""
+                    : $"""<p class="reco">{Encode(score!.AiRecommendation!)}</p>""";
+
+                var href = SafeHref(offer.Url);
+
                 sb.Append($"""
                     <div class="card" data-techs="{Encode(score?.AiTechList ?? "")}">
-                      <div class="stars">{stars} <span style="color:#52606d;font-size:13px">({score?.TotalScore ?? 0} pts)</span></div>
-                      <h3>{Encode(offer.Title)} <span class="src">{Encode(offer.SourceProvider)}</span></h3>
-                      <div class="meta">{Encode(offer.CompanyName)} · {WorkModeLabel(offer.WorkMode)} · {Encode(offer.Location ?? "—")} · {salary} · publicada el {offer.PublishedAt:yyyy-MM-dd}</div>
-                      <div class="tags">{Encode(score?.AiTechList ?? "")}</div>
-                      <p>{Encode(score?.AiSummary ?? "")}</p>
+                      <div class="cardtop">
+                        <div>
+                          <h3><a href="{href}" target="_blank" rel="noopener noreferrer">{Encode(offer.Title)}</a></h3>
+                          <div class="meta">{Encode(offer.CompanyName)} · {Encode(offer.Location ?? "—")} · {salary} · publicada el {offer.PublishedAt:yyyy-MM-dd}</div>
+                        </div>
+                        <div class="scorebox"><span class="score {ScoreBand(total)}">{total} pts</span><div class="stars">{Stars(total)}</div></div>
+                      </div>
+                      <div class="rowtags">
+                        <span class="tag mode-{ModeClass(offer.WorkMode)}">{WorkModeLabel(offer.WorkMode)}</span>
+                        {seniority}
+                        <span class="tag src">{Encode(offer.SourceProvider)}</span>
+                      </div>
+                      {techRow}
+                      {summary}
                       {requirements}
-                      <p><i>{Encode(score?.AiRecommendation ?? "")}</i></p>
-                      <a href="{SafeHref(offer.Url)}">Ver oferta →</a>
+                      {recommendation}
+                      <a class="cta" href="{href}" target="_blank" rel="noopener noreferrer">Ver oferta →</a>
                     </div>
                     """);
             }
@@ -411,7 +478,7 @@ public static partial class RunDailyPipeline
                 </script>
                 """);
 
-            sb.Append("</body></html>");
+            sb.Append("""<div class="foot">Generado por JobHunter AI · pipeline diario</div></div></body></html>""");
             return sb.ToString();
         }
 
@@ -422,6 +489,39 @@ public static partial class RunDailyPipeline
             WorkMode.OnSite => "Presencial",
             _ => "modo n/d",
         };
+
+        private static string ModeClass(WorkMode mode) => mode switch
+        {
+            WorkMode.Remote => "remote",
+            WorkMode.Hybrid => "hybrid",
+            WorkMode.OnSite => "onsite",
+            _ => "unknown",
+        };
+
+        // Bandas de la puntuación total para colorear el badge. Los umbrales
+        // salen de la escala real de JobScoreCalculator (top realista ~80-140):
+        // ≥90 encaje claro, 55-89 interesante con peros, <55 flojo.
+        private static string ScoreBand(int totalScore) => totalScore switch
+        {
+            >= 90 => "high",
+            >= 55 => "mid",
+            _ => "low",
+        };
+
+        /// <summary>Convierte "C#, .NET, SQL" en chips individuales encodeados.</summary>
+        private static string TechChips(string? techList)
+        {
+            if (string.IsNullOrWhiteSpace(techList))
+            {
+                return "";
+            }
+
+            var chips = techList
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(t => $"""<span class="tech">{Encode(t)}</span>""");
+
+            return string.Concat(chips);
+        }
 
         private static string Stars(int totalScore)
         {

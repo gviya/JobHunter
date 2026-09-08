@@ -49,6 +49,19 @@ internal static class RequestAuthorizer
 {
     public static bool IsLocal(HttpContext http)
     {
+        // Una petición que atraviesa un proxy NUNCA se considera local: con un
+        // proxy inverso en la misma máquina (IIS/nginx/Caddy) TODAS las
+        // peticiones de fuera llegan desde loopback y, sin esta comprobación,
+        // entrarían sin API key. Los proxies añaden estas cabeceras; un
+        // cliente que las falsifique solo consigue restringirse a sí mismo
+        // (fail-closed, nunca escala privilegios).
+        if (http.Request.Headers.ContainsKey("X-Forwarded-For") ||
+            http.Request.Headers.ContainsKey("Forwarded") ||
+            http.Request.Headers.ContainsKey("X-Real-IP"))
+        {
+            return false;
+        }
+
         var remote = http.Connection.RemoteIpAddress;
 
         // Sin IP remota = petición en proceso (tests, health interno): local.

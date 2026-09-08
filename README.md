@@ -97,10 +97,16 @@ secretos), `Ollama`, `Email`, `Schedule:CronExpression`.
 Hangfire (`/hangfire`) están protegidos:
 
 - **Peticiones locales** (loopback / misma máquina): siempre permitidas — el
-  uso normal en local no requiere configurar nada.
+  uso normal en local no requiere configurar nada. Excepción: una petición con
+  cabeceras de proxy (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`) **nunca**
+  cuenta como local, aunque llegue desde loopback — con un proxy inverso en la
+  misma máquina todo el tráfico externo entra por loopback y, sin esa regla,
+  pasaría sin clave.
 - **Desde fuera de la máquina**: hay que aportar `Security:ApiKey`. Los
   endpoints la esperan en la cabecera `X-Api-Key`; el dashboard, al abrirse en
-  el navegador, la acepta como query string `?apiKey=...`.
+  el navegador, la acepta como query string `?apiKey=...` (al validarla deja
+  una cookie HttpOnly limitada a `/hangfire` para que el polling AJAX interno
+  del dashboard siga autorizado).
 - Si no se configura ninguna clave, **solo** se admite acceso local: el
   servicio nunca queda abierto por accidente al exponerlo en red.
 
@@ -108,9 +114,15 @@ Hangfire (`/hangfire`) están protegidos:
 dotnet user-secrets set "Security:ApiKey" "una-clave-larga-aleatoria" --project src/JobHunter.Api
 ```
 
-`/jobs/run-now` además está limitado a 3 ejecuciones/minuto (rate limiting).
-Fuera de `Development` se fuerza HTTPS (redirección + HSTS); restringe también
-`AllowedHosts` al host real en producción.
+`/jobs/run-now` además está limitado a 3 ejecuciones/minuto **por IP** (rate
+limiting particionado: un cliente remoto no puede agotar el cupo del usuario
+local). Fuera de `Development` se fuerza HTTPS (redirección + HSTS); restringe
+también `AllowedHosts` al host real en producción.
+
+Nota sobre logs: `System.Net.Http` está en `Warning` en la configuración de
+Serilog a propósito — a `Information` el `HttpClientFactory` escribe la URL
+completa de cada petición saliente, y Adzuna/Jooble llevan la API key en la
+URL. No lo bajes de nivel.
 
 ### Perfil personal (`appsettings.Local.json`)
 

@@ -38,6 +38,9 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+    <!-- Eleva la versión transitiva del SQLite nativo por encima de la
+         2.1.11 vulnerable (GHSA-2m69-gcr7-jv3q); ver Directory.Packages.props. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
   </ItemGroup>
 
   <ItemGroup Label="Scheduler + servicios externos">

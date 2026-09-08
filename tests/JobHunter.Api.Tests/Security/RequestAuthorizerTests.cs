@@ -36,6 +36,21 @@ public sealed class RequestAuthorizerTests
     public void IsLocal_IpPublicaRemota_NoEsLocal() =>
         RequestAuthorizer.IsLocal(ContextFrom("203.0.113.10")).Should().BeFalse();
 
+    // Con un proxy inverso en la misma máquina, TODAS las peticiones externas
+    // llegan desde loopback: si la cabecera de proxy no anulase IsLocal, un
+    // atacante entraría sin API key solo por atravesar el proxy.
+    [Theory]
+    [InlineData("X-Forwarded-For", "203.0.113.10")]
+    [InlineData("Forwarded", "for=203.0.113.10")]
+    [InlineData("X-Real-IP", "203.0.113.10")]
+    public void IsLocal_LoopbackPeroConCabeceraDeProxy_NoEsLocal(string header, string value)
+    {
+        var http = ContextFrom("127.0.0.1");
+        http.Request.Headers[header] = value;
+
+        RequestAuthorizer.IsLocal(http).Should().BeFalse();
+    }
+
     [Fact]
     public void HasValidApiKey_SinClaveConfigurada_Rechaza() =>
         RequestAuthorizer.HasValidApiKey(ConfigWithKey(null), "cualquier-cosa").Should().BeFalse();

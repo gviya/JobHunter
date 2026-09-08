@@ -52,16 +52,22 @@ try
     // Rate limiting: /jobs/run-now dispara un pipeline caro (búsqueda +
     // embeddings + IA) que consume cuota de APIs de pago. Se limita a unas
     // pocas ejecuciones por minuto para frenar abusos o disparos accidentales.
+    // Particionado POR IP: con un único cubo global, un cliente remoto
+    // (aunque acabe en 401) agotaría el cupo y dejaría al usuario local
+    // recibiendo 429 — el limitador corre ANTES del filtro de API key.
     const string RunNowPolicy = "run-now";
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-        options.AddFixedWindowLimiter(RunNowPolicy, limiter =>
-        {
-            limiter.PermitLimit = 3;
-            limiter.Window = TimeSpan.FromMinutes(1);
-            limiter.QueueLimit = 0;
-        });
+        options.AddPolicy(RunNowPolicy, http =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                http.Connection.RemoteIpAddress?.ToString() ?? "in-process",
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 3,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                }));
     });
 
     // ── Hangfire (scheduler) sobre SQLite ───────────────────────────
