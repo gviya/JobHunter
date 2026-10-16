@@ -10,8 +10,8 @@ namespace JobHunter.Application.Features.Pipeline;
 
 /// <summary>
 /// Caso de uso central: ejecuta el pipeline diario completo — buscar en
-/// todas las fuentes, deduplicar (exacto + semántico), analizar con IA,
-/// puntuar y generar el informe.
+/// todas las fuentes, deduplicar (exacto, por empresa + título y
+/// semántico), analizar con IA, puntuar y generar el informe.
 /// </summary>
 public static partial class RunDailyPipeline
 {
@@ -26,6 +26,10 @@ public static partial class RunDailyPipeline
         ILogger<Handler> logger) : IRequestHandler<Command, DailyReport>
     {
         private const float DuplicateThreshold = 0.92f;
+
+        // Días hacia atrás en los que una oferta de la misma empresa cuenta
+        // como "ya vista" para los dos dedups (por título y semántico).
+        private const int DuplicateLookbackDays = 30;
 
         // Fallback si el perfil no define keywords: sin ellas no habría
         // búsqueda. Pocas y de backend para no agotar la cuota gratuita de
@@ -67,12 +71,13 @@ public static partial class RunDailyPipeline
             logger.LogInformation("Filtro de desplazamiento: {Kept}/{Total} remotas o conmutables.",
                 commutableOffers.Count, localOffers.Count);
 
-            // ── 2. DEDUP EXACTO + guardar nuevas ────────────────────────
-            var newOffers = await SaveNewOffersAsync(commutableOffers, cancellationToken);
+            // ── 2. DEDUP EXACTO + POR EMPRESA Y TÍTULO + guardar nuevas ─
+            var (newOffers, titleDuplicates) = await SaveNewOffersAsync(commutableOffers, cancellationToken);
             report.TotalNew = newOffers.Count;
 
             // ── 3. DEDUP SEMÁNTICO (embeddings de Ollama) ───────────────
-            report.TotalDuplicates = await MarkSemanticDuplicatesAsync(newOffers, cancellationToken);
+            var semanticDuplicates = await MarkSemanticDuplicatesAsync(newOffers, cancellationToken);
+            report.TotalDuplicates = titleDuplicates + semanticDuplicates;
 
             // ── 4 + 5. ANALIZAR + PUNTUAR (nuevas + pendientes de
             //           ejecuciones anteriores) ────────────────────────────
@@ -128,7 +133,13 @@ public static partial class RunDailyPipeline
             }
         }
 
-        private async Task<List<JobOffer>> SaveNewOffersAsync(IReadOnlyList<JobOffer> found, CancellationToken ct)
+        /// <summary>
+        /// Dedup exacto + dedup por empresa y título, y guarda las nuevas.
+        /// Devuelve TODAS las guardadas (duplicadas incluidas) y cuántas de
+        /// ellas se marcaron como duplicadas por título.
+        /// </summary>
+        private async Task<(List<JobOffer> Saved, int TitleDuplicates)> SaveNewOffersAsync(
+            IReadOnlyList<JobOffer> found, CancellationToken ct)
         {
             var newOffers = new List<JobOffer>();
             var seen = new HashSet<string>();
@@ -150,11 +161,95 @@ public static partial class RunDailyPipeline
                     continue;
                 }
 
-                await repository.SaveAsync(offer, ct);
                 newOffers.Add(offer);
             }
 
-            return newOffers;
+            // Antes de guardar: así las duplicadas llegan a BD ya marcadas.
+            var titleDuplicates = await MarkSameTitleDuplicatesAsync(newOffers, ct);
+
+            // Las duplicadas también se guardan: mañana el dedup exacto las
+            // reconoce por (ExternalId, SourceProvider) y no vuelven a pasar
+            // por aquí. Con IsDuplicate = true nunca se analizan
+            // (GetUnanalyzedAsync las excluye) ni salen en el top.
+            foreach (var offer in newOffers)
+            {
+                await repository.SaveAsync(offer, ct);
+            }
+
+            return (newOffers, titleDuplicates);
+        }
+
+        /// <summary>
+        /// Dedup determinista por (empresa normalizada, título normalizado):
+        /// la misma oferta publicada en Adzuna + JSearch + Jooble, o
+        /// republicada por la empresa con otro id, se analizaría (IA de pago)
+        /// y saldría en el top dos o tres veces. El dedup semántico también
+        /// la detecta, pero depende de Ollama y se salta entero si no está
+        /// levantado; este paso es barato y funciona siempre.
+        ///
+        /// Conservador: solo casa títulos idénticos tras normalizar, y la
+        /// normalización de empresa no siempre coincide entre fuentes
+        /// (Greenhouse usa el token del board como nombre), así que algunos
+        /// duplicados entre fuentes se escapan; para esos queda el semántico.
+        /// Compromiso asumido (el mismo que ya hace el semántico): dos
+        /// vacantes con el mismo título en la misma empresa dentro de
+        /// <see cref="DuplicateLookbackDays"/> días cuentan como una sola.
+        /// </summary>
+        private async Task<int> MarkSameTitleDuplicatesAsync(List<JobOffer> newOffers, CancellationToken ct)
+        {
+            // Sin empresa o sin título (vacíos tras normalizar) no hay clave
+            // fiable: dos "Backend Developer" de empresa desconocida no son
+            // necesariamente la misma oferta.
+            var keyed = newOffers
+                .Select(o => (Offer: o, Title: NormalizeTitle(o.Title)))
+                .Where(x => x.Offer.CompanyNormalized is { Length: > 0 } && x.Title.Length > 0)
+                .ToList();
+
+            // 1) Dentro del lote, en memoria (nada del lote está aún en BD).
+            //    Se conserva la más informativa: la descripción completa del
+            //    ATS vale más que el snippet de un agregador. OrderBy es
+            //    estable: a igual longitud, gana la primera vista.
+            var inBatch = 0;
+            foreach (var group in keyed.GroupBy(x => (x.Offer.CompanyNormalized!, x.Title)))
+            {
+                var kept = group.OrderByDescending(x => x.Offer.Description?.Length ?? 0).First().Offer;
+
+                foreach (var (offer, _) in group)
+                {
+                    if (!ReferenceEquals(offer, kept))
+                    {
+                        offer.IsDuplicate = true;
+                        inBatch++;
+                    }
+                }
+            }
+
+            // 2) Contra lo reciente en BD, con una consulta por empresa.
+            var recentByCompany = new Dictionary<string, List<(Guid Id, string Title)>>();
+            var againstDb = 0;
+
+            foreach (var (offer, title) in keyed.Where(x => !x.Offer.IsDuplicate))
+            {
+                var company = offer.CompanyNormalized!;
+                if (!recentByCompany.TryGetValue(company, out var recent))
+                {
+                    var stored = await repository.GetRecentByCompanyAsync(company, DuplicateLookbackDays, ct);
+                    recent = [.. stored.Select(o => (o.Id, NormalizeTitle(o.Title)))];
+                    recentByCompany[company] = recent;
+                }
+
+                if (recent.Any(r => r.Id != offer.Id && r.Title == title))
+                {
+                    offer.IsDuplicate = true;
+                    againstDb++;
+                }
+            }
+
+            logger.LogInformation(
+                "Dedup por empresa + título: {Total} duplicadas ({InBatch} dentro del lote, {AgainstDb} ya vistas en los últimos {Days} días).",
+                inBatch + againstDb, inBatch, againstDb, DuplicateLookbackDays);
+
+            return inBatch + againstDb;
         }
 
         private async Task<int> MarkSemanticDuplicatesAsync(List<JobOffer> newOffers, CancellationToken ct)
@@ -163,13 +258,20 @@ public static partial class RunDailyPipeline
 
             foreach (var offer in newOffers)
             {
+                // Ya marcada por el dedup de título: no hace falta gastar
+                // una llamada de embeddings para confirmarlo.
+                if (offer.IsDuplicate)
+                {
+                    continue;
+                }
+
                 try
                 {
                     var text = $"{offer.Title} {offer.CompanyName} {offer.Description}";
                     var embedding = await embeddingService.GetEmbeddingAsync(text, ct);
                     offer.Embedding = embedding;
 
-                    var recent = await repository.GetRecentByCompanyAsync(offer.CompanyNormalized!, 30, ct);
+                    var recent = await repository.GetRecentByCompanyAsync(offer.CompanyNormalized!, DuplicateLookbackDays, ct);
 
                     foreach (var other in recent)
                     {
@@ -245,20 +347,7 @@ public static partial class RunDailyPipeline
         // ── Normalización de empresa ────────────────────────────────────
         public static string NormalizeCompany(string company)
         {
-            var lower = company.ToLowerInvariant().Trim();
-
-            // Quitar acentos.
-            var decomposed = lower.Normalize(NormalizationForm.FormD);
-            var sb = new StringBuilder(decomposed.Length);
-            foreach (var c in decomposed)
-            {
-                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
-                {
-                    sb.Append(c);
-                }
-            }
-
-            var text = sb.ToString().Normalize(NormalizationForm.FormC);
+            var text = RemoveDiacritics(company.ToLowerInvariant().Trim());
 
             // Quitar formas societarias (S.L., S.A., S.L.U., Inc, Ltd...).
             text = LegalSuffixRegex().Replace(text, " ");
@@ -274,6 +363,56 @@ public static partial class RunDailyPipeline
 
         [GeneratedRegex(@"[^a-z0-9]+")]
         private static partial Regex NonAlphanumericRegex();
+
+        // ── Normalización de título (clave del dedup por título) ────────
+        /// <summary>
+        /// Título comparable entre fuentes: minúsculas, sin acentos, sin
+        /// marcadores de género (que unas fuentes ponen y otras no) y con la
+        /// puntuación colapsada a espacios. Conserva '#' y '+' para no
+        /// confundir C#, C++ y C. Es conservadora a propósito: el resto del
+        /// contenido entre paréntesis se mantiene, porque "(Senior)" y
+        /// "(Junior)" son puestos distintos.
+        /// </summary>
+        public static string NormalizeTitle(string title)
+        {
+            var text = RemoveDiacritics(title.ToLowerInvariant().Trim());
+
+            text = GenderMarkerRegex().Replace(text, " ");
+            text = NonTitleCharRegex().Replace(text, " ").Trim();
+
+            return text;
+        }
+
+        // Se aplica sobre texto ya en minúsculas y sin acentos. Casa:
+        // - letras de género entre paréntesis o corchetes: (m/f/d), (m/w/d),
+        //   [h/m], (f/m/x), (m/f/div)... ("(Senior)" no: exige letras sueltas
+        //   separadas por '/');
+        // - las mismas de tres partes sin paréntesis ("m/w/d"), y
+        //   "(all genders)" / "(gn)";
+        // - el "/a", "/as", "/o", "(a)" del español, solo pegado a una palabra
+        //   de 2+ letras ("desarrollador/a"; "i/o" se queda como está).
+        [GeneratedRegex(
+            @"[(\[]\s*[mfwhdx]\s*(?:/\s*(?:[mfwhdx]|div|nb)\s*){1,3}[)\]]|\b[mfwh]/[mfwh]/(?:[dx]|div)\b|\(\s*(?:all genders|gn\*?)\s*\)|(?<=[a-z]{2})(?:/(?:as|os|a|o)|\((?:as|os|a|o)\))(?![a-z0-9])")]
+        private static partial Regex GenderMarkerRegex();
+
+        [GeneratedRegex(@"[^a-z0-9#+]+")]
+        private static partial Regex NonTitleCharRegex();
+
+        private static string RemoveDiacritics(string text)
+        {
+            var decomposed = text.Normalize(NormalizationForm.FormD);
+            var sb = new StringBuilder(decomposed.Length);
+
+            foreach (var c in decomposed)
+            {
+                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
+                {
+                    sb.Append(c);
+                }
+            }
+
+            return sb.ToString().Normalize(NormalizationForm.FormC);
+        }
 
         // ── Generación del HTML del informe ─────────────────────────────
         // internal (no private) para poder verificar desde los tests que el
