@@ -424,6 +424,10 @@ public sealed class WorkModeHeuristicsTests
     [InlineData("Madrid (teletrabajo 2/3 días)")]
     [InlineData("Madrid (2 días/semana teletrabajo)")]
     [InlineData("Madrid - Hybrid; Valencia - Hybrid")]
+    // Regresión (revisión: digit-guard-untested): con espacios alrededor del
+    // "/" sí se ejercita la guarda de cifras; sin ella el campo se partía en
+    // "Madrid (teletrabajo 2", que es remoto, y salía Remote.
+    [InlineData("Madrid (teletrabajo 2 / 3 días)")]
     public void FromText_LocalizacionHibridaSinSedeRemota_EsHibrido(string location)
     {
         WorkModeHeuristics.FromText(title: null, location: location, description: null)
@@ -530,6 +534,18 @@ public sealed class WorkModeHeuristicsTests
             string.Concat(Enumerable.Repeat("no se permite ", 3_000)),
             string.Concat(Enumerable.Repeat("hybrid ", 3_000)),
             new string(' ', 20_000) + "dias",
+            // Regresión (revisión: whitespace-backtracking): rachas de espacios
+            // o saltos de línea tras una palabra remota. Los \s* opcionales
+            // seguidos se repartían la racha de todas las formas posibles
+            // (unos 100 s con 50.000 espacios).
+            "remoto" + new string(' ', 20_000) + "x hibrido",
+            "remoto" + new string(' ', 20_000) + "x",
+            "remote" + new string('\n', 20_000) + "x hybrid",
+            "teletrabajo" + new string('\t', 20_000) + "x",
+            "remoto (" + new string(' ', 20_000) + "x hibrido",
+            "remoto" + string.Concat(Enumerable.Repeat(" \n", 10_000)) + "x hibrido",
+            "no se puede teletrabajar" + new string(' ', 20_000) + "x",
+            "hibrido o remoto" + new string(' ', 20_000) + "x",
         };
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -540,6 +556,226 @@ public sealed class WorkModeHeuristicsTests
 
         stopwatch.Stop();
         stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
+    }
+
+    [Theory]
+    // Colapsar las rachas de espacios no cambia el modo: el "\n" (también el
+    // "\r\n" de Windows) sigue cerrando el "Teletrabajo: No", y los
+    // tabuladores o espacios duros siguen separando palabras.
+    [InlineData("Teletrabajo: No\r\n\r\nSalario: 35.000 €", WorkMode.OnSite)]
+    [InlineData("Remoto   o \t  híbrido", WorkMode.Remote)]
+    [InlineData("Teletrabajo\t\t2\u00A0días", WorkMode.Hybrid)]
+    public void FromText_RachasDeEspacios_NoCambianElModo(string text, WorkMode expected)
+    {
+        FromDescription(text).Should().Be(expected);
+    }
+
+    // ── Negaciones de un remoto concreto (revisión: negation-of-specific-remote-forces-onsite) ──
+
+    [Theory]
+    // Regresión: una negación que solo excluye un país o región con nombre,
+    // un tipo de contrato o un beneficio condicional forzaba OnSite (y con
+    // AcceptOnSite=false la oferta remota se descartaba). Ahora, si sobrevive
+    // un remoto positivo y no hay exigencia explícita de presencia, es remoto.
+    [InlineData("Remote role within Spain. We cannot offer remote contracts in Portugal or France.")]
+    [InlineData("Teletrabajo desde cualquier punto de España. No se puede teletrabajar desde Canarias, Ceuta ni Melilla.")]
+    [InlineData("Puesto en remoto. Ayuda para coworking si no puedes teletrabajar desde casa.")]
+    [InlineData("Remote-first company. We do not support remote work from Russia or Belarus.")]
+    [InlineData("Remote (EU). We don't allow remote work from the US due to tax reasons.")]
+    [InlineData("Remote within the EU. Remote work isn't possible from non-EU countries.")]
+    [InlineData("Remote\n\nWe can't offer remote work to candidates based in the US.")]
+    [InlineData("Location: Remote (Spain)\nPlease note: we do not support remote employment in Germany.")]
+    [InlineData("Remote role. Note: we don't provide a remote work allowance.")]
+    // Una visita o una semana de incorporación presenciales no son una
+    // exigencia de presencia del puesto.
+    [InlineData("Remote role within Spain. We cannot offer remote contracts in Portugal. Presencialidad obligatoria una vez al trimestre.")]
+    [InlineData("Remote role within Spain. We cannot offer remote contracts in Portugal. On-site onboarding week in Madrid.")]
+    public void FromText_NegacionDeUnRemotoConcreto_EsRemoto(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Remote);
+    }
+
+    [Theory]
+    // Regresión (de extremo a extremo en la revisión): Greenhouse solo da el
+    // país o la ciudad, así que decide la descripción; salía OnSite.
+    [InlineData("Spain", "&lt;p&gt;Remote role within Spain.&lt;/p&gt;&lt;p&gt;We cannot offer remote contracts in Portugal or France.&lt;/p&gt;")]
+    [InlineData("España", "&lt;p&gt;Teletrabajo desde cualquier punto de Espa&amp;ntilde;a.&lt;/p&gt;&lt;p&gt;No se puede teletrabajar desde Canarias, Ceuta ni Melilla.&lt;/p&gt;")]
+    [InlineData("Barcelona, Spain", "&lt;p&gt;Puesto en remoto.&lt;/p&gt;&lt;p&gt;Ayuda para coworking si no puedes teletrabajar desde casa.&lt;/p&gt;")]
+    public void FromText_GreenhouseRemotoConNegacionDeUnRemotoConcreto_EsRemoto(string location, string content)
+    {
+        var description = HtmlText.ToPlainText(content);
+
+        WorkModeHeuristics.FromText(title: "Backend Developer", location: location, description: description)
+            .Should().Be(WorkMode.Remote);
+    }
+
+    [Theory]
+    // Con una exigencia EXPLÍCITA de presencia, el remoto que sobrevive a la
+    // negación no cuenta: sigue siendo presencial.
+    [InlineData("Puesto 100% presencial. No se puede teletrabajar; teletrabajo solo en casos excepcionales.")]
+    [InlineData("Presencial obligatorio en Madrid. No se puede teletrabajar salvo urgencias; teletrabajo con autorización.")]
+    [InlineData("Fully on-site role. No remote work. Remote-friendly culture events.")]
+    // Sin remoto positivo que sobreviva, la negación sigue decidiendo.
+    [InlineData("Puesto presencial en Madrid. No remoto.")]
+    [InlineData("Trabajo presencial; no es posible el teletrabajo.")]
+    [InlineData("Sin opción de trabajo remoto")]
+    public void FromText_NegacionSinRemotoQueSobreviva_EsPresencial(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.OnSite);
+    }
+
+    // ── Topes al teletrabajo (revisión: capped-negation-forces-onsite) ──
+
+    [Theory]
+    // Regresión: una negación que solo pone un TOPE al teletrabajo (días,
+    // "todos los días", días de la semana, "al 100%") borraba el remoto sin
+    // dejar señal híbrida y salía OnSite; una oferta híbrida en Madrid se
+    // descartaba con AcceptOnSite=false.
+    [InlineData("No se puede teletrabajar más que dos días por semana.")]
+    [InlineData("No se puede teletrabajar los lunes (día de equipo en la oficina).")]
+    [InlineData("En este puesto no se puede teletrabajar al 100%.")]
+    [InlineData("No puedes teletrabajar todos los días: los martes vamos a la oficina.")]
+    [InlineData("We don't support remote work for more than 2 days a week.")]
+    [InlineData("We don't allow remote work more than 2 days per week.")]
+    [InlineData("We do not offer remote work on Mondays and Tuesdays (team days).")]
+    [InlineData("El teletrabajo no es posible más de dos días a la semana.")]
+    [InlineData("Remote work isn't possible every day: Tuesdays at the office.")]
+    [InlineData("No remote work on Fridays.")]
+    [InlineData("No es posible el teletrabajo al 100%.")]
+    [InlineData("We cannot offer remote work full-time.")]
+    [InlineData("Sin teletrabajo los viernes")]
+    [InlineData("No hay trabajo remoto los viernes")]
+    public void FromText_NegacionConTopeDeTeletrabajo_EsHibrido(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Hybrid);
+    }
+
+    [Theory]
+    // Sin tope detrás, o con el "100%" DELANTE (niega el modo completo, no
+    // lo acota), sigue siendo una negación.
+    [InlineData("No se puede teletrabajar de lunes a viernes.")]
+    [InlineData("No es remoto al 100%.")]
+    [InlineData("No es posible trabajar 100% en remoto.")]
+    [InlineData("This position isn't fully remote.")]
+    public void FromText_NegacionSinTope_SiguePresencial(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.OnSite);
+    }
+
+    // ── Porcentajes tras "remoto" (revisión: workload-split-read-as-partial-remote) ──
+
+    [Theory]
+    // Regresión: un porcentaje tras "remoto/remote" se leía como tiempo en
+    // remoto aunque repartiera TAREAS; salía Hybrid (en el título, que manda
+    // sobre todo) y se descartaba fuera de Madrid.
+    [InlineData("Desarrollador Fullstack Remoto (70% backend, 30% frontend)", null, null)]
+    [InlineData("Fullstack Developer - Remote (70% backend / 30% frontend)", null, null)]
+    [InlineData("Desarrollador Fullstack Remoto (70% backend, 30% frontend)", "España", null)]
+    [InlineData("Backend Developer", null, "Puesto remoto (80% desarrollo, 20% soporte).")]
+    [InlineData("Backend Developer", null, "Remote (50% coding, 50% architecture)")]
+    [InlineData("Backend Developer", null, "Remote: 60% engineering, 40% management.")]
+    [InlineData("Backend Developer", null, "Remote (30% on-call rotation)")]
+    public void FromText_PorcentajeQueRepartePorTareas_SigueRemoto(string title, string? location, string? description)
+    {
+        WorkModeHeuristics.FromText(title: title, location: location, description: description)
+            .Should().Be(WorkMode.Remote);
+    }
+
+    [Theory]
+    // Un porcentaje sin nada detrás, con una palabra de tiempo o con el
+    // resto del reparto sí es tiempo en remoto: híbrido.
+    [InlineData("Remoto 60% del tiempo")]
+    [InlineData("Remote 50% of the time")]
+    [InlineData("Teletrabajo al 40%, resto en oficina")]
+    [InlineData("Remoto (60%)")]
+    [InlineData("Teletrabajo 60% y 40% presencial")]
+    public void FromText_PorcentajeDeTiempoEnRemoto_EsHibrido(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Hybrid);
+    }
+
+    // ── "Híbrido o remoto" seguido de una cantidad (revisión: partial-tail-any-quantity) ──
+
+    [Theory]
+    // Regresión: cualquier palabra de cantidad tras "híbrido o remoto"
+    // ("some travel", "one of the two", "part of a team") volvía parcial el
+    // remoto y salía Hybrid; en la localización eso manda sobre la descripción.
+    [InlineData("Hybrid or remote - some travel required.")]
+    [InlineData("Hybrid or remote: one of the two, your choice.")]
+    [InlineData("Híbrido o remoto - algunas visitas a cliente.")]
+    [InlineData("Hybrid or remote - part of a growing team.")]
+    [InlineData("Hybrid or remote - a few trips per year.")]
+    [InlineData("Hybrid or remote - occasional travel.")]
+    public void FromText_HibridoORemotoConCantidadQueNoCuentaDias_EsRemoto(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Remote);
+    }
+
+    [Fact]
+    public void FromText_LocalizacionHibridaORemotaConViajes_EsRemoto()
+    {
+        // Regresión (de extremo a extremo en la revisión): salía Hybrid.
+        WorkModeHeuristics.FromText(
+                title: "Backend Engineer",
+                location: "Hybrid or Remote - Some travel to Madrid required",
+                description: "C#.")
+            .Should().Be(WorkMode.Remote);
+    }
+
+    [Theory]
+    // Si la cantidad cuenta días, el remoto sí es la parte en casa del híbrido.
+    [InlineData("Hybrid or remote some days")]
+    [InlineData("Híbrido o remoto algunos días")]
+    [InlineData("Hybrid or remote - two days a week")]
+    [InlineData("Hybrid or remote part of the week")]
+    [InlineData("Híbrido o teletrabajo ocasional")]
+    public void FromText_HibridoORemotoConDiasContados_EsHibrido(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Hybrid);
+    }
+
+    // ── Rangos de días con guion (revisión: weekday-range-with-dash) ──
+
+    [Theory]
+    // Regresión: "lunes-viernes" (con guion o raya) se leía como un solo día
+    // de teletrabajo y salía Hybrid; es la semana entera.
+    [InlineData("Horario: lunes-viernes remoto")]
+    [InlineData("Horario de L-V. Lunes–viernes remoto.")]
+    [InlineData("Teletrabajo lunes-viernes")]
+    [InlineData("Teletrabajo lunes – viernes")]
+    public void FromText_RangoDeDiasConGuion_EsRemoto(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Remote);
+    }
+
+    // ── Híbridos que descartan el remoto completo (revisión: full-remote-negation-variants) ──
+
+    [Theory]
+    // Regresión: las formas habituales de decir que el remoto completo NO
+    // está disponible no se reconocían como negación; el "100% remoto /
+    // fully remote" sobrevivía y la oferta híbrida salía Remote.
+    [InlineData("This is a hybrid role and is not eligible for fully remote work.")]
+    [InlineData("Modelo híbrido (no hay opción de 100% remoto). 3 días en oficina.")]
+    [InlineData("Puesto híbrido, no se contempla el 100% remoto.")]
+    [InlineData("Modelo híbrido; no ofrecemos 100% remoto.")]
+    [InlineData("Hybrid. We're unable to offer fully remote.")]
+    [InlineData("Hybrid role. Not looking for 100% remote candidates.")]
+    // "Teletrabajo y modelo híbrido" describe el propio híbrido: "y" tras
+    // "teletrabajo" no es una alternativa.
+    [InlineData("Teletrabajo y modelo híbrido: 2 días en oficina.")]
+    public void FromText_HibridoQueDescartaElRemotoCompleto_EsHibrido(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Hybrid);
+    }
+
+    [Theory]
+    // Tras "teletrabajo" siguen valiendo los separadores de alternativa y la
+    // coma de una lista de opciones.
+    [InlineData("Teletrabajo / híbrido")]
+    [InlineData("Teletrabajo, híbrido o presencial: tú eliges")]
+    public void FromText_TeletrabajoComoAlternativaAHibrido_EsRemoto(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Remote);
     }
 
     // ── Lever ───────────────────────────────────────────────────────────
