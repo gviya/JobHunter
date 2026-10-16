@@ -81,6 +81,53 @@ public sealed class HtmlTextTests
         text.Should().Be("Equipo < 10 personas y remoto");
     }
 
+    // Regresión: se decodificaba ANTES de quitar etiquetas en todas las
+    // fuentes, así que en el HTML normal (Lever, Jooble, Adzuna) un texto
+    // escapado como "&lt;T&gt;" se volvía "<T>", se tomaba por etiqueta y
+    // desaparecía: se perdían los genéricos de .NET y los correos de contacto
+    // del texto que se puntúa y se manda a la IA.
+    [Theory]
+    [InlineData("<li>Task&lt;T&gt;</li>", "- Task<T>")]
+    [InlineData(
+        "<ul><li>Experience with List&lt;T&gt; and Task&lt;IActionResult&gt;</li></ul>",
+        "- Experience with List<T> and Task<IActionResult>")]
+    [InlineData(
+        "<p>Envía tu CV a Juan &lt;juan@acme.es&gt; antes del viernes</p>",
+        "Envía tu CV a Juan <juan@acme.es> antes del viernes")]
+    [InlineData("Buscamos <b>backend</b> con ILogger&lt;T&gt;", "Buscamos backend con ILogger<T>")]
+    public void ToPlainText_ConHtmlNormalYTextoEscapado_ConservaElTextoEscapado(string html, string expected)
+    {
+        HtmlText.ToPlainText(html).Should().Be(expected);
+    }
+
+    [Fact]
+    public void ToPlainText_ConHtmlNormalDoblementeEscapado_DecodificaUnaSolaVez()
+    {
+        // En HTML normal "&amp;amp;" es el texto "&amp;": decodificar dos
+        // veces (lo que necesita Greenhouse) lo dejaría en "&".
+        HtmlText.ToPlainText("<p>Escribe &amp;amp; para un ampersand</p>")
+            .Should().Be("Escribe &amp; para un ampersand");
+    }
+
+    [Fact]
+    public void ToPlainText_ConTextoPlanoYAnguloEscapado_NoLoTomaPorHtmlEscapado()
+    {
+        // Regresión: sin etiquetas reales, decodificar primero también se comía
+        // "<senior>". No es HTML escapado porque al decodificar no aparece
+        // ningún elemento HTML de verdad.
+        HtmlText.ToPlainText("experiencia &lt;senior&gt; o más con Task&lt;T&gt;")
+            .Should().Be("experiencia <senior> o más con Task<T>");
+    }
+
+    [Fact]
+    public void ToPlainText_ConHtmlEscapadoSoloConEtiquetasInline_LasQuita()
+    {
+        // HTML escapado entero aunque no traiga bloques: se decodifica primero
+        // y se quitan sus etiquetas, sin colar "<b>" en el texto.
+        HtmlText.ToPlainText("Buscamos &lt;b&gt;desarrollador&lt;/b&gt; con Task&amp;lt;T&amp;gt;")
+            .Should().Be("Buscamos desarrollador con Task<T>");
+    }
+
     [Fact]
     public void ToPlainText_ConTextoPlano_LoDevuelveSinCambios()
     {
