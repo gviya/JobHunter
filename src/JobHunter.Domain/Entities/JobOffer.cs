@@ -37,12 +37,15 @@ public sealed class JobOffer
     public string? Location { get; set; }
 
     /// <summary>
-    /// Cliente final (empresa de producto) frente a consultora/agencia. Los
-    /// providers de ATS (Greenhouse/Lever) lo ponen a true por defecto; tras
-    /// el análisis manda lo que deduzca la IA, porque ni los agregadores
-    /// saben marcarlo ni todas las "empresas objetivo" son cliente final.
+    /// Cliente final (empresa de producto) frente a consultora/agencia; null
+    /// = no se sabe. Los providers de ATS (Greenhouse/Lever) lo ponen a true
+    /// por defecto y los agregadores lo dejan en null; tras el análisis manda
+    /// lo que deduzca la IA, porque ni los agregadores saben marcarlo ni todas
+    /// las "empresas objetivo" son cliente final. El "no se sabe" es explícito
+    /// para que puntúe neutro: con un bool, toda oferta de agregador nacía
+    /// "consultora" y la fuente seguía decidiendo la puntuación.
     /// </summary>
-    public bool IsClientFinal { get; set; }
+    public bool? IsClientFinal { get; set; }
 
     public DateTime PublishedAt { get; set; }
     public DateTime DiscoveredAt { get; init; } = DateTime.UtcNow;

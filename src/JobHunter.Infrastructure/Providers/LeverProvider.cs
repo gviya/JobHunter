@@ -68,6 +68,16 @@ public sealed class LeverProvider(
             ? DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime
             : DateTime.UtcNow;
 
+        var description = BuildDescription(p);
+
+        // El workplaceType estructurado manda; si la empresa no lo rellena
+        // ("unspecified"), se recurre al texto como en el resto de fuentes.
+        var workMode = WorkModeHeuristics.FromLeverWorkplaceType(p.WorkplaceType);
+        if (workMode == WorkMode.Unknown)
+        {
+            workMode = WorkModeHeuristics.FromText(title: p.Text, location: location, description: description);
+        }
+
         return new JobOffer
         {
             ExternalId = p.Id ?? Guid.NewGuid().ToString(),
@@ -75,9 +85,9 @@ public sealed class LeverProvider(
             Title = p.Text ?? "(sin título)",
             CompanyName = token,
             Url = p.HostedUrl ?? string.Empty,
-            Description = BuildDescription(p),
+            Description = description,
             Location = location,
-            WorkMode = WorkModeHeuristics.FromLeverWorkplaceType(p.WorkplaceType),
+            WorkMode = workMode,
             IsClientFinal = true,
             PublishedAt = publishedAt,
         };

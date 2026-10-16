@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace JobHunter.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(JobHunterDbContext))]
-    [Migration("20261016111806_AddDescriptionIsSnippet")]
-    partial class AddDescriptionIsSnippet
+    [Migration("20261016113926_BackfillScoringSignals")]
+    partial class BackfillScoringSignals
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -82,7 +82,7 @@ namespace JobHunter.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsAnalyzed")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsClientFinal")
+                    b.Property<bool?>("IsClientFinal")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsDuplicate")

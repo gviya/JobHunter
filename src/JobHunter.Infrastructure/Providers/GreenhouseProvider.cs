@@ -67,6 +67,7 @@ public sealed class GreenhouseProvider(
     private JobOffer Map(string token, GreenhouseJob job)
     {
         var location = job.Location?.Name;
+        var description = HtmlText.ToPlainText(job.Content);
 
         return new JobOffer
         {
@@ -75,9 +76,9 @@ public sealed class GreenhouseProvider(
             Title = job.Title ?? "(sin título)",
             CompanyName = token,
             Url = job.AbsoluteUrl ?? string.Empty,
-            Description = HtmlText.ToPlainText(job.Content),
+            Description = description,
             Location = location,
-            WorkMode = WorkModeHeuristics.FromText(title: job.Title, location: location, description: job.Content),
+            WorkMode = WorkModeHeuristics.FromText(title: job.Title, location: location, description: description),
             IsClientFinal = true,
             PublishedAt = job.UpdatedAt ?? DateTime.UtcNow,
         };

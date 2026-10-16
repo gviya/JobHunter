@@ -228,6 +228,26 @@ public sealed class JobScoreCalculatorTests
             .ClientFinalScore.Should().Be(-10);
     }
 
+    [Fact]
+    public void Calculate_ClienteFinalDesconocido_PuntuaNeutro()
+    {
+        // Ni el agregador ni la IA saben si es cliente final: no debe contar
+        // como consultora (-10), que era el sesgo por fuente de antes.
+        var offer = new JobOffer
+        {
+            ExternalId = "10",
+            SourceProvider = "Jooble",
+            Title = "Backend Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/10",
+            WorkMode = WorkMode.Remote,
+            IsClientFinal = null,
+        };
+
+        JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfile())
+            .ClientFinalScore.Should().Be(0);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("Backend .NET.")]

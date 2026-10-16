@@ -113,6 +113,34 @@ public sealed class LeverProviderTests
         result[0].Description.Should().Be("Backend en .NET\nEquipo pequeño");
     }
 
+    [Theory]
+    [InlineData("unspecified")]
+    [InlineData(null)]
+    public async Task SearchAsync_SinWorkplaceType_DeduceElModoDelTexto(string? workplaceType)
+    {
+        // Sin workplaceType estructurado no se queda en Unknown: se recurre a
+        // la heurística sobre título/ubicación/descripción completa.
+        var workplace = workplaceType is null ? "" : $"\"workplaceType\": \"{workplaceType}\",";
+        var json = $$"""
+            [
+              {
+                "id": "u1",
+                "text": "Backend Developer",
+                "hostedUrl": "https://jobs.lever.co/acme/u1",
+                "descriptionPlain": "Equipo de plataforma en .NET.",
+                "lists": [ { "text": "Condiciones", "content": "<li>Modelo híbrido: 2 días de teletrabajo</li>" } ],
+                {{workplace}}
+                "categories": { "location": "Madrid" }
+              }
+            ]
+            """;
+
+        var result = await CreateProvider(json, "acme").SearchAsync(new SearchFilter(["backend"], "España", null, null));
+
+        result.Should().ContainSingle();
+        result[0].WorkMode.Should().Be(WorkMode.Hybrid);
+    }
+
     [Fact]
     public async Task SearchAsync_SinEmpresasObjetivo_DevuelveVacio()
     {

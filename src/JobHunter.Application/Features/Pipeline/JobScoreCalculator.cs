@@ -20,7 +20,7 @@ namespace JobHunter.Application.Features.Pipeline;
 ///    conmutable. CommuteFilter descarta ambos casos antes de analizar, pero
 ///    la IA puede revelar DESPUÉS que una oferta "remota" es híbrida o
 ///    presencial: entonces no se descarta, se hunde aquí.
-///  - Cliente final +20 / consultora -10.
+///  - Cliente final +20 / consultora -10 / no se sabe 0.
 ///  - Salario (SalaryMax): ≥70k +25, ≥60k +20, ≥50k +15, ≥40k +5, &lt;40k -10, null -5.
 ///  - Techs conocidas: cada tech del perfil (TechWeights, escala 0-10) que
 ///    aparezca en la oferta suma su peso; el total se capa en +40.
@@ -41,7 +41,12 @@ internal static class JobScoreCalculator
     public static JobScore Calculate(JobOffer offer, AiAnalysisResult analysis, UserProfile profile)
     {
         var remote = LocationScore(offer, profile);
-        var clientFinal = offer.IsClientFinal ? 20 : -10;
+        var clientFinal = offer.IsClientFinal switch
+        {
+            true => 20,
+            false => -10,
+            null => 0, // ni la fuente ni la IA lo saben: neutro
+        };
         var salary = SalaryScore(offer.SalaryMax);
         var tech = TechScore(offer, analysis, profile);
         var infoQuality = InfoQualityScore(offer);

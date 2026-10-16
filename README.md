@@ -31,15 +31,27 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
    especificar), después desplazamiento — el remoto pasa siempre (prioridad
    máxima); híbrido/presencial solo si su localización es compatible con la
    ciudad y zonas del perfil (los municipios excluidos se descartan antes de
-   gastar análisis de IA).
-3. **Deduplica** exacto por `(ExternalId, SourceProvider)` y semántico por
-   similitud coseno de embeddings (Ollama) contra ofertas recientes de la
-   misma empresa.
+   gastar análisis de IA). El modo de trabajo sale de los datos
+   estructurados de la fuente si los hay (`workplaceType` de Lever,
+   `job_is_remote` de JSearch) y si no de una heurística por campos: título
+   y ubicación mandan sobre la descripción, y "híbrido con 2 días de
+   teletrabajo" o "no es remoto" ya no cuentan como remoto.
+3. **Deduplica** en tres pasos: exacto por `(ExternalId, SourceProvider)`;
+   por empresa + título normalizados (sin acentos ni marcadores de género),
+   dentro de la ejecución y contra los últimos 30 días, quedándose con la
+   versión de descripción más completa — funciona sin Ollama, así que la
+   misma oferta publicada en Adzuna, JSearch y Jooble se analiza una sola
+   vez; y semántico por similitud coseno de embeddings (Ollama) contra
+   ofertas recientes de la misma empresa. Dos vacantes con el mismo título
+   en la misma empresa en ese plazo cuentan como una.
 4. **Analiza** cada oferta nueva con IA (Claude Haiku u Ollama local) contra
    el perfil del candidato (resumen, seniority, techs, pros/contras,
-   recomendación). Las que fallaron en ejecuciones anteriores (IA caída,
-   créditos agotados...) se reintentan mientras estén dentro de la ventana
-   del informe (`ReportWindowDays`, 7 días por defecto).
+   recomendación). La IA también dice si la empresa es cliente final o
+   consultora/agencia y cuál es el modo de trabajo real según el texto; si
+   lo sabe, corrige lo que supuso la fuente antes de puntuar. Las que
+   fallaron en ejecuciones anteriores (IA caída, créditos agotados...) se
+   reintentan mientras estén dentro de la ventana del informe
+   (`ReportWindowDays`, 7 días por defecto).
 5. **Puntúa** (modo de trabajo/zona, cliente final vs. consultora, salario,
    stack con pesos 0-10, techs excluidas, calidad de la información) y genera
    el **informe HTML** con el top 15 de los últimos `ReportWindowDays` días
@@ -156,7 +168,14 @@ Resumen del modelo de puntuación/filtrado que alimenta:
   híbrido solo si la localización menciona `City` o una `PreferredZones`
   (+15, +5 si es zona preferida) y no menciona una `ExcludedAreas`;
   presencial igual pero penalizado (-10). Lo que no cumple se descarta
-  antes del análisis de IA.
+  antes del análisis de IA; si la IA revela después que una oferta "remota"
+  es híbrida/presencial y no encaja (o el perfil no acepta ese modo), se
+  hunde (-25/-30).
+- **Cliente final** +20, consultora/agencia -10, no se sabe 0 (lo decide la
+  IA leyendo la oferta, no la fuente).
+- **Calidad de la información** — según la longitud de la descripción ya
+  limpia de HTML (de -25 a +8). Adzuna y Jooble solo dan un extracto, así
+  que en sus ofertas cuenta 0: la longitud no dice nada de la oferta real.
 
 Si no existe `appsettings.Local.json`, la aplicación arranca con un perfil
 de ejemplo genérico (backend .NET) definido en `UserProfile.CreateDefault()`.

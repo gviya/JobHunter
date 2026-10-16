@@ -22,7 +22,7 @@ public interface IJobRepository
     /// </summary>
     Task<IReadOnlyList<JobOffer>> GetUnanalyzedAsync(DateTime discoveredSince, CancellationToken ct = default);
 
-    /// <summary>Ofertas recientes de una misma empresa (para el dedup semántico).</summary>
+    /// <summary>Ofertas recientes de una misma empresa (para los dedups por título y semántico).</summary>
     Task<IReadOnlyList<JobOffer>> GetRecentByCompanyAsync(
         string companyNormalized, int days = 30, CancellationToken ct = default);
 

@@ -7,7 +7,7 @@ namespace JobHunter.Application.Tests.Features.Pipeline;
 
 public sealed class AiSignalsTests
 {
-    private static JobOffer Offer(string source, WorkMode mode, bool isClientFinal, string? location = null) => new()
+    private static JobOffer Offer(string source, WorkMode mode, bool? isClientFinal, string? location = null) => new()
     {
         ExternalId = "1",
         SourceProvider = source,
@@ -84,7 +84,8 @@ public sealed class AiSignalsTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void Apply_ConIsClientFinalNull_ConservaElDelProvider(bool fromProvider)
+    [InlineData(null)] // agregador: tampoco lo sabe, sigue "no se sabe"
+    public void Apply_ConIsClientFinalNull_ConservaElDelProvider(bool? fromProvider)
     {
         var offer = Offer("Greenhouse", WorkMode.Remote, isClientFinal: fromProvider);
 

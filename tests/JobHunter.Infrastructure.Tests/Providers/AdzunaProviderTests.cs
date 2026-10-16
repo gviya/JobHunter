@@ -52,6 +52,7 @@ public sealed class AdzunaProviderTests
         offer.Location.Should().Be("Madrid, España");
         // Adzuna trunca la descripción (~500 caracteres): es un extracto.
         offer.DescriptionIsSnippet.Should().BeTrue();
+        offer.IsClientFinal.Should().BeNull(); // el agregador no lo sabe: lo decide la IA
     }
 
     [Fact]

@@ -98,6 +98,9 @@ public sealed class AdzunaProvider(
     {
         var location = r.Location?.DisplayName;
 
+        // El extracto de Adzuna puede traer entidades o etiquetas sueltas.
+        var description = HtmlText.ToPlainText(r.Description);
+
         return new JobOffer
         {
             ExternalId = r.Id ?? Guid.NewGuid().ToString(),
@@ -105,12 +108,12 @@ public sealed class AdzunaProvider(
             Title = r.Title ?? "(sin título)",
             CompanyName = r.Company?.DisplayName ?? "(empresa desconocida)",
             Url = r.RedirectUrl ?? string.Empty,
-            Description = r.Description,
+            Description = description,
             DescriptionIsSnippet = true,
             SalaryMin = r.SalaryMin,
             SalaryMax = r.SalaryMax,
             Location = location,
-            WorkMode = WorkModeHeuristics.FromText(title: r.Title, location: location, description: r.Description),
+            WorkMode = WorkModeHeuristics.FromText(title: r.Title, location: location, description: description),
             PublishedAt = r.Created ?? DateTime.UtcNow,
         };
     }
