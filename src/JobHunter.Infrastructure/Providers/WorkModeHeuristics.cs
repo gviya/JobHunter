@@ -38,7 +38,9 @@ namespace JobHunter.Infrastructure.Providers;
 ///     b. Las negaciones ("sin teletrabajo", "not remote") se borran. Un TOPE
 ///        al teletrabajo ("no se puede teletrabajar más de 2 días / todos los
 ///        días / los lunes / al 100%", "we don't offer remote work on
-///        Mondays") también se borra, pero cuenta como señal híbrida.
+///        Mondays") también se borra, pero cuenta como señal híbrida. Un "más
+///        de" que no cuenta la semana ("no se puede teletrabajar más de 3
+///        meses al año desde el extranjero") no es tope ni negación: se deja.
 ///     c. Un remoto COMPLETO explícito que sobreviva ("100% remoto", "fully
 ///        remote") o el remoto como alternativa ("remoto o híbrido") es
 ///        remoto, aunque el texto también diga "híbrido" o restrinja el país.
@@ -158,9 +160,22 @@ internal static partial class WorkModeHeuristics
             // que el cierre solo se reserve cuando hay algo que neutralizar.
             var caps = false;
             var negates = false;
+            var source = text;
             text = RemoteNeutralizerRegex().Replace(text, m =>
             {
-                if (m.Groups["cap"].Success)
+                if (m.Groups["limit"].Success)
+                {
+                    // "No se puede teletrabajar más de...": solo es un tope si
+                    // cuenta la semana. "... más de 3 meses al año desde el
+                    // extranjero" se deja tal cual, y su remoto sigue contando.
+                    if (!WeeklyCapRegex().IsMatch(source.AsSpan(m.Index + m.Length)))
+                    {
+                        return m.Value;
+                    }
+
+                    caps = true;
+                }
+                else if (m.Groups["cap"].Success)
                 {
                     caps = true;
                 }
@@ -326,17 +341,50 @@ internal static partial class WorkModeHeuristics
 
     // ── Negaciones y topes (se neutralizan antes de clasificar) ─────────
 
-    // Tope DETRÁS de una negación de remoto: "no se puede teletrabajar MÁS
-    // DE / MÁS QUE 2 días", "... todos los días", "... los lunes", "... al
-    // 100%", "we don't offer remote work FOR MORE THAN 2 days / on Mondays /
-    // full-time". No niega el remoto: dice CUÁNTO, y eso es un híbrido.
-    // Empieza por \s+, así que el \w* de "teletrabaj\w*" no puede recortarse
-    // para saltárselo. Un "100%" DELANTE ("no es (posible trabajar) 100% en
-    // remoto") niega el modo completo, no lo acota: sigue siendo negación.
+    // Lo que puede ir entre una negación de remoto y su tope o límite ("no se
+    // puede trabajar EN REMOTO más de...", "we don't offer remote WORK for
+    // more than..."). Empieza por \s+, así que el \w* de "teletrabaj\w*" no
+    // puede recortarse para saltárselo.
+    private const string CapLead =
+        @"\s+(?:(?:work(?:ing)?|trabajo|en\s+remoto|remotely|from\s+home|desde\s+casa)\s+)?";
+
+    private const string MoreThan = @"(?:mas\s+(?:del?|que)|(?:for\s+)?more\s+than)";
+
+    // "Más de / más que / more than" detrás de una negación de remoto: LIMITA
+    // el teletrabajo, no lo niega. Si lo que sigue es una cantidad semanal es
+    // un tope (ver WeeklyCapRegex); si no ("más de 3 meses al año desde el
+    // extranjero"), la frase no se toca y su remoto sigue contando.
+    private const string RemoteLimit = CapLead + MoreThan + @"\b";
+
+    // Un plazo más largo que la semana detrás de la cantidad ("al año", "al
+    // mes", "a year", "per month", "seguidos"): el límite cuenta otra cosa
+    // (cuánto se puede trabajar desde fuera), no los días en casa de un híbrido.
+    private const string NotLongerPeriod =
+        @"(?!\s+(?:(?:al|el|del?|los|las|por|a|an|cada|per|each|every|in|of|the)\s+){0,2}(?:anos?|mes(?:es)?|trimestres?|years?|months?|quarters?)\b"
+        + @"|\s+(?:seguid[oa]s?|consecutiv[oa]s?|consecutive|in\s+a\s+row|anual(?:es|mente)?|mensual(?:es|mente)?|yearly|annually|monthly)\b)";
+
+    // Cantidad SEMANAL tras "más de / más que / more than": días ("2 días",
+    // "dos veces por semana", "twice a week", "un par de días a la semana",
+    // "dos jornadas a la semana", "16 horas semanales"), la mitad ("de la
+    // mitad de la jornada"), días de la semana ("que los viernes") o un
+    // porcentaje ("del 40% de la jornada"). El porcentaje va fuera del \b:
+    // tras "%" no hay límite de palabra.
+    private const string WeeklyQuantity =
+        @"(?:(?:" + DayFreq
+        + @"|(?:\w+\s+){1,3}(?:dias?|days?|jornadas?|horas?|hours?)\s+(?:(?:a\s+la|a|por|cada|per|each|every)\s+(?:semana|week)|semanal(?:es|mente)?|weekly)"
+        + @"|(?:la\s+)?mitad|half|(?:los\s+|el\s+)?(?:lunes|martes|miercoles|jueves|viernes))\b"
+        + @"|(?:(?:un|el|a)\s+)?\d{1,3}(?:[.,]\d+)?\s*%)"
+        + NotLongerPeriod;
+
+    // Tope DETRÁS de una negación de remoto: "no se puede teletrabajar todos
+    // los días / los lunes / al 100%", "we don't offer remote work on Mondays
+    // / full-time". No niega el remoto: dice CUÁNTO, y eso es un híbrido. Un
+    // "100%" DELANTE ("no es (posible trabajar) 100% en remoto") niega el
+    // modo completo, no lo acota: sigue siendo negación. El tope con "más de
+    // 2 días" empieza por RemoteLimit y lo decide WeeklyCapRegex.
     private const string RemoteCap =
-        @"\s+(?:(?:work(?:ing)?|trabajo|en\s+remoto|remotely|from\s+home|desde\s+casa)\s+)?"
-        + @"(?:mas\s+(?:del?|que)|(?:for\s+)?more\s+than"
-        + @"|(?:al|el)\s+100|100\s*%\s*(?:del?\s+(?:la\s+)?(?:tiempo|semana|jornada)|of\s+the\s+(?:time|week))"
+        CapLead
+        + @"(?:(?:al|el)\s+100|100\s*%\s*(?:del?\s+(?:la\s+)?(?:tiempo|semana|jornada)|of\s+the\s+(?:time|week))"
         + @"|todos\s+los\s+dias|toda\s+la\s+(?:semana|jornada)|a\s+(?:tiempo|jornada)\s+complet[ao]|every\s+day|all\s+week|full[\s-]time"
         + @"|(?:los\s+|el\s+)?(?:lunes|martes|miercoles|jueves|viernes)|on\s+(?:mon|tue|wed|thu|fri)\w*)\b";
 
@@ -372,13 +420,18 @@ internal static partial class WorkModeHeuristics
 
     /// <summary>
     /// Negaciones del remoto: las <see cref="CappableNegation"/> que NO llevan
-    /// un tope detrás ("no se puede teletrabajar más de 2 días" no niega el
+    /// un tope detrás ("no se puede teletrabajar los lunes" no niega el
     /// remoto: es un híbrido) y <see cref="FixedRemoteNegation"/>. Las que
     /// admiten tope van primero: "no hay trabajo remoto los viernes" casa
     /// también "no hay trabajo remoto" de las fijas, y debe leerse como tope.
+    /// Ninguna lleva un <see cref="RemoteLimit"/> detrás: "no se puede
+    /// teletrabajar más de 2 días" es un tope, y "... más de 3 meses al año
+    /// desde el extranjero" limita el remoto de un puesto remoto, no lo
+    /// niega. La comprobación vale para las dos: si no, "no hay trabajo remoto
+    /// más de..." casaría como fija.
     /// </summary>
     private const string NegatedRemotePhrase =
-        @"(?:" + CappableNegation + @"(?!" + RemoteCap + @")|" + FixedRemoteNegation + @")";
+        @"(?:" + CappableNegation + @"(?!" + RemoteCap + @")|" + FixedRemoteNegation + @")(?!" + RemoteLimit + @")";
 
     // Exigencia explícita de presencia: "100% presencial", "presencial al
     // 100%", "totalmente presencial", "fully on-site", "100% in-office".
@@ -418,14 +471,30 @@ internal static partial class WorkModeHeuristics
     /// <see cref="CappableNegation"/> seguida de <see cref="RemoteCap"/>, que
     /// casa el grupo vacío "cap" y cuenta como señal híbrida) y exigencias
     /// explícitas de presencia (<see cref="ExplicitOnSitePhrase"/>). La
-    /// negación con y sin tope va en una sola alternativa, con el grupo
-    /// opcional, para no recorrer dos veces cada descripción buscándola; y va
-    /// primero, como en <see cref="NegatedRemotePhrase"/>.
+    /// negación con y sin tope va en una sola alternativa para no recorrer dos
+    /// veces cada descripción buscándola; y va primero, como en
+    /// <see cref="NegatedRemotePhrase"/>. Con un <see cref="RemoteLimit"/>
+    /// detrás casa el grupo vacío "limit", y es <see cref="WeeklyCapRegex"/>
+    /// quien decide si es un tope o se deja tal cual. La cantidad semanal no
+    /// va aquí dentro: hacía el código generado un 50% más grande y cada
+    /// descripción, aunque no tuviera ninguna negación, un 25% más lenta. Y
+    /// con un cuantificador perezoso ("{1,3}?") en un lookahead de esta
+    /// regex, que tiene capturas, el código generado entraba en un bucle
+    /// infinito (el intérprete no).
     /// </summary>
     [GeneratedRegex(
-        CappableNegation + "(?:(?<cap>)(?=" + RemoteCap + "))?|" + FixedRemoteNegation + "|" + ExplicitOnSitePhrase,
+        CappableNegation + "(?:(?<cap>)(?=" + RemoteCap + ")|(?<limit>)(?=" + RemoteLimit + "))?|"
+        + "(?:" + FixedRemoteNegation + ")(?!" + RemoteLimit + ")|" + ExplicitOnSitePhrase,
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex RemoteNeutralizerRegex();
+
+    /// <summary>
+    /// Tope con "más de / más que / more than" (ver <see cref="RemoteLimit"/>):
+    /// solo si detrás viene una cantidad SEMANAL (<see cref="WeeklyQuantity"/>).
+    /// Se prueba justo donde acaba la negación, sobre el resto del texto.
+    /// </summary>
+    [GeneratedRegex("^" + CapLead + MoreThan + @"\s+" + WeeklyQuantity, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex WeeklyCapRegex();
 
     /// <summary>
     /// Exigencia explícita de presencia (<see cref="ExplicitOnSitePhrase"/>,
@@ -474,11 +543,26 @@ internal static partial class WorkModeHeuristics
     // propio híbrido ("modelo híbrido y teletrabajo flexible").
     private const string AltOrSep = @"\s*(?:[/|]|\b(?:o|u|or)\b)\s*";
 
-    // Tras "teletrabajo" (que a secas no es remoto completo) vale además la
-    // coma de una lista ("Teletrabajo, híbrido o presencial"), pero no
-    // "y"/"e": "Teletrabajo y modelo híbrido: 2 días en oficina" describe el
-    // propio híbrido.
+    // Tras "teletrabajo" (que a secas no es remoto completo) los separadores
+    // de AltSep van en dos grupos. Los de alternativa y la coma de una lista
+    // ("Teletrabajo / híbrido", "Teletrabajo, híbrido o presencial") valen
+    // siempre; los de suma ("y", "e", "and", ";", "&", "+") solo si tras
+    // "híbrido" no viene su calendario (ver NoHybridSchedule).
     private const string AltOrCommaSep = @"\s*(?:[/|]|,(?:\s*(?:o|u|or)\b)?|\b(?:o|u|or)\b)\s*";
+
+    private const string AndSep = @"\s*(?:[;&+]|,\s*(?:y|and)\b|\b(?:y|e|and)\b)\s*";
+
+    // Calendario del híbrido justo detrás de "teletrabajo y (modelo)
+    // híbrido": "Teletrabajo y modelo híbrido: 2 días en oficina", "... (3
+    // días presencial)", "... con dos días en la oficina", "... - los
+    // viernes". Ahí la frase describe UN modelo, no dos alternativas. Sin
+    // él es una lista de opciones ("Modalidades: teletrabajo e híbrido, a
+    // elegir", "Teletrabajo (España) y híbrido (Madrid)"): ante la duda,
+    // remoto. Se mira por delante, tras el separador y con la palabra
+    // "híbrido" a secas, para no repetir HybridWord en otra rama.
+    private const string NoHybridSchedule =
+        @"(?!" + ModeFiller + @"(?:hibrid[oa]|hybrid)\b\s*(?:[:(\-]\s*)?(?:con\s+)?"
+        + @"(?:\d|(?:un[oa]?|dos|tres|cuatro)(?:\s+(?:o|y|a)\s+\w+)?\s+(?:dias?|veces|jornadas?)\b|(?:los\s+)?(?:lunes|martes|miercoles|jueves|viernes)\b))";
 
     // "remoto 100%", "remote: 100%", "teletrabajo al 100%". "\s*(?::\s*)?" y
     // no "\s*:?\s*", por lo mismo que en FullRemoteRegex.
@@ -533,10 +617,10 @@ internal static partial class WorkModeHeuristics
         // delante no cambia si casa) y DESPUÉS se mira hacia atrás que no sea
         // un remoto parcial: así el motor solo prueba el patrón donde hay
         // "remot" o "teletrabajo" y no en cada palabra. "Remoto" admite
-        // cualquier separador; "teletrabajo", solo los de alternativa salvo
-        // que lleve "100%".
+        // cualquier separador; "teletrabajo" también, pero con "y"/"e"/"and"
+        // no puede venir detrás el calendario del híbrido (ver AltOrCommaSep).
         @"\b(?:(?:remot[oa]|remote)\b" + RemoteFirstGuard + @"(?:" + Full100Tail + @")?" + AltParen + AltSep
-        + @"|teletrabajo\b" + RemoteFirstGuard + @"(?:" + Full100Tail + AltParen + AltSep + @"|" + AltParen + AltOrCommaSep + @"))"
+        + @"|teletrabajo\b" + RemoteFirstGuard + @"(?:" + Full100Tail + @")?" + AltParen + @"(?:" + AltOrCommaSep + @"|" + AndSep + NoHybridSchedule + @"))"
         + ModeFiller + HybridWord
         // Híbrido primero con "o" / "/": alternativa clara.
         + @"|\b(?:hibrid[oa]|hybrid)" + AltParen + AltOrSep + ModeFiller + FullQualifier + @"?" + AltRemoteWord + PartialTail

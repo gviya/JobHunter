@@ -546,6 +546,12 @@ public sealed class WorkModeHeuristicsTests
             "remoto" + string.Concat(Enumerable.Repeat(" \n", 10_000)) + "x hibrido",
             "no se puede teletrabajar" + new string(' ', 20_000) + "x",
             "hibrido o remoto" + new string(' ', 20_000) + "x",
+            // Regresión (revisión: r4-workmode-1): la cantidad semanal tras
+            // "más de" se busca dentro de un lookahead; con el bucle perezoso
+            // el código generado no terminaba nunca.
+            string.Concat(Enumerable.Repeat("no se puede teletrabajar mas de un par de meses al ano ", 2_000)),
+            string.Concat(Enumerable.Repeat("we don't allow remote work for more than 4 weeks a year ", 2_000)),
+            string.Concat(Enumerable.Repeat("teletrabajo y modelo hibrido: ", 3_000)),
         };
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -646,6 +652,52 @@ public sealed class WorkModeHeuristicsTests
     [InlineData("Sin teletrabajo los viernes")]
     [InlineData("No hay trabajo remoto los viernes")]
     public void FromText_NegacionConTopeDeTeletrabajo_EsHibrido(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Hybrid);
+    }
+
+    // ── Límites que no cuentan la semana (revisión: r4-workmode-1) ──
+
+    [Theory]
+    // Regresión: todo "más de / more than" tras una negación se leía como
+    // tope SEMANAL y salía Hybrid; un puesto remoto que limita el trabajo
+    // desde el EXTRANJERO por año o por mes se descartaba fuera de Madrid.
+    [InlineData("Puesto en remoto desde España. No se puede teletrabajar más de 3 meses al año desde el extranjero.")]
+    [InlineData("Trabajo en remoto. No se puede teletrabajar más de 30 días al año desde fuera de España.")]
+    [InlineData("Teletrabajo desde cualquier punto de España. No se puede trabajar en remoto más de 4 semanas al año desde otro país.")]
+    [InlineData("Teletrabajo. No es posible teletrabajar más de un mes seguido desde el extranjero.")]
+    [InlineData("Remote-first: no se puede teletrabajar más de 2 meses fuera de España.")]
+    // La misma regla en inglés y con una negación que también casa como fija.
+    [InlineData("We don't allow remote work for more than 4 weeks a year from abroad.")]
+    [InlineData("Trabajo en remoto. No hay trabajo remoto más de 30 días al año desde fuera de España.")]
+    public void FromText_LimiteAnualOMensualDesdeElExtranjero_EsRemoto(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Remote);
+    }
+
+    [Fact]
+    public void FromText_GreenhouseRemotoConLimiteAnualDesdeElExtranjero_EsRemoto()
+    {
+        // Regresión (r4-workmode-1, de extremo a extremo en la revisión): con
+        // la localización "Spain" decide la descripción; salía Hybrid.
+        var description = HtmlText.ToPlainText(
+            "&lt;p&gt;Puesto en remoto desde Espa&amp;ntilde;a.&lt;/p&gt;"
+            + "&lt;p&gt;No se puede teletrabajar m&amp;aacute;s de 3 meses al a&amp;ntilde;o desde el extranjero.&lt;/p&gt;");
+
+        WorkModeHeuristics.FromText(title: "Backend Developer", location: "Spain", description: description)
+            .Should().Be(WorkMode.Remote);
+    }
+
+    [Theory]
+    // Regresión (r4-workmode-1): con una cantidad SEMANAL detrás, "más de"
+    // sigue siendo un tope y el puesto, híbrido.
+    [InlineData("No se puede teletrabajar más de 2 días por semana")]
+    [InlineData("No se puede teletrabajar más del 40% de la jornada.")]
+    [InlineData("No se puede teletrabajar más de un par de días a la semana.")]
+    [InlineData("No se puede teletrabajar más de la mitad de la semana.")]
+    [InlineData("No se puede teletrabajar más que los viernes.")]
+    [InlineData("We don't offer remote work for more than 16 hours per week.")]
+    public void FromText_MasDeConCantidadSemanal_EsHibrido(string text)
     {
         FromDescription(text).Should().Be(WorkMode.Hybrid);
     }
@@ -776,6 +828,75 @@ public sealed class WorkModeHeuristicsTests
     public void FromText_TeletrabajoComoAlternativaAHibrido_EsRemoto(string text)
     {
         FromDescription(text).Should().Be(WorkMode.Remote);
+    }
+
+    // ── "Teletrabajo y/e híbrido" como lista de opciones (revisión: r4-workmode-2) ──
+
+    [Theory]
+    // Regresión: tras "teletrabajo" solo valían "/", "|", ",", "o", "u" y
+    // "or", así que una lista de modalidades con "y"/"e" salía Hybrid y se
+    // descartaba fuera de Madrid. Sin calendario detrás de "híbrido", es una
+    // alternativa: ante la duda, remoto.
+    [InlineData("Modalidades: teletrabajo e híbrido, a elegir.")]
+    [InlineData("Posibilidad de teletrabajo y modelo híbrido, a elegir.")]
+    [InlineData("Opciones de teletrabajo e híbrido según preferencia")]
+    [InlineData("Modalidad: teletrabajo y híbrido")]
+    [InlineData("Teletrabajo (España) y híbrido (Madrid)")]
+    [InlineData("Teletrabajo & híbrido")]
+    [InlineData("Teletrabajo + híbrido")]
+    // Siguen siendo remotos como antes.
+    [InlineData("Remoto y híbrido")]
+    [InlineData("Teletrabajo o híbrido")]
+    public void FromText_TeletrabajoYHibridoComoOpciones_EsRemoto(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Remote);
+    }
+
+    [Theory]
+    // Regresión (r4-workmode-2): en los campos cortos, que mandan sobre la
+    // descripción, también salía Hybrid.
+    [InlineData("Desarrollador .NET - Teletrabajo e Híbrido", null)]
+    [InlineData("Desarrollador .NET", "Madrid (Teletrabajo e híbrido)")]
+    public void FromText_TeletrabajoEHibridoEnCampoCorto_EsRemoto(string title, string? location)
+    {
+        WorkModeHeuristics.FromText(title: title, location: location, description: "Modelo híbrido.")
+            .Should().Be(WorkMode.Remote);
+    }
+
+    [Fact]
+    public void FromText_GreenhouseTituloTeletrabajoEHibrido_EsRemoto()
+    {
+        // Regresión (r4-workmode-2, de extremo a extremo en la revisión): con
+        // la localización "España" el título decide; salía Hybrid.
+        WorkModeHeuristics.FromText(
+                title: "Desarrollador .NET - Teletrabajo e Híbrido",
+                location: "España",
+                description: HtmlText.ToPlainText("&lt;p&gt;Equipo de plataforma.&lt;/p&gt;"))
+            .Should().Be(WorkMode.Remote);
+    }
+
+    [Fact]
+    public void FromText_GreenhouseModalidadesTeletrabajoEHibrido_EsRemoto()
+    {
+        // Regresión (r4-workmode-2, de extremo a extremo en la revisión): con
+        // la localización "Barcelona, Spain" decide la descripción; salía Hybrid.
+        var description = HtmlText.ToPlainText(
+            "&lt;p&gt;Modalidades: teletrabajo e h&amp;iacute;brido, a elegir.&lt;/p&gt;");
+
+        WorkModeHeuristics.FromText(title: "Backend Developer", location: "Barcelona, Spain", description: description)
+            .Should().Be(WorkMode.Remote);
+    }
+
+    [Theory]
+    // Regresión (r4-workmode-2): con el calendario del híbrido detrás, la
+    // frase describe UN modelo y sigue siendo híbrida.
+    [InlineData("Teletrabajo y modelo híbrido (3 días en oficina).")]
+    [InlineData("Teletrabajo e híbrido - dos días presenciales.")]
+    [InlineData("Teletrabajo y modelo híbrido con 2 días en la oficina.")]
+    [InlineData("Teletrabajo y modelo híbrido: los viernes en la oficina.")]
+    public void FromText_TeletrabajoYHibridoConSuCalendario_EsHibrido(string text)
+    {
+        FromDescription(text).Should().Be(WorkMode.Hybrid);
     }
 
     // ── Lever ───────────────────────────────────────────────────────────
