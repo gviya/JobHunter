@@ -15,11 +15,35 @@ public sealed class JobOffer
     public string? CompanyNormalized { get; set; }
     public required string Url { get; init; }
     public string? Description { get; set; }
+
+    /// <summary>
+    /// True cuando la fuente solo devuelve un EXTRACTO de la descripción
+    /// (Adzuna la trunca a ~500 caracteres; Jooble da un "snippet"): su
+    /// longitud no dice nada de lo bien o mal explicada que está la oferta,
+    /// así que no se puntúa la calidad de la información y se avisa a la IA.
+    /// </summary>
+    public bool DescriptionIsSnippet { get; set; }
+
     public decimal? SalaryMin { get; set; }
     public decimal? SalaryMax { get; set; }
+
+    /// <summary>
+    /// Modo de trabajo. El provider lo estima (heurística o campo de la
+    /// fuente) y, tras el análisis, se sustituye por el que la IA lee en la
+    /// oferta si esta lo deja claro.
+    /// </summary>
     public WorkMode WorkMode { get; set; }
+
     public string? Location { get; set; }
+
+    /// <summary>
+    /// Cliente final (empresa de producto) frente a consultora/agencia. Los
+    /// providers de ATS (Greenhouse/Lever) lo ponen a true por defecto; tras
+    /// el análisis manda lo que deduzca la IA, porque ni los agregadores
+    /// saben marcarlo ni todas las "empresas objetivo" son cliente final.
+    /// </summary>
     public bool IsClientFinal { get; set; }
+
     public DateTime PublishedAt { get; set; }
     public DateTime DiscoveredAt { get; init; } = DateTime.UtcNow;
     public bool IsAnalyzed { get; set; }

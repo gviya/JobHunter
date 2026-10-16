@@ -11,7 +11,8 @@ namespace JobHunter.Infrastructure.Providers;
 /// <summary>
 /// Provider de Lever: lee las postings públicas de cada empresa objetivo
 /// (sin autenticación). Usa el campo <c>workplaceType</c> para el modo de
-/// trabajo. Al ser el ATS propio, se consideran de cliente final.
+/// trabajo. Al ser el ATS propio, se marcan de cliente final POR DEFECTO
+/// (la IA lo corrige al analizar).
 /// </summary>
 public sealed class LeverProvider(
     IHttpClientFactory httpClientFactory,
@@ -74,12 +75,53 @@ public sealed class LeverProvider(
             Title = p.Text ?? "(sin título)",
             CompanyName = token,
             Url = p.HostedUrl ?? string.Empty,
-            Description = p.DescriptionPlain ?? p.Description,
+            Description = BuildDescription(p),
             Location = location,
             WorkMode = WorkModeHeuristics.FromLeverWorkplaceType(p.WorkplaceType),
             IsClientFinal = true,
             PublishedAt = publishedAt,
         };
+    }
+
+    /// <summary>
+    /// Descripción COMPLETA de la posting. En Lever "description" suele ser
+    /// solo la presentación: los requisitos viven en "lists" ([{"text":
+    /// "Requirements", "content": "&lt;li&gt;...&lt;/li&gt;"}]) y el cierre en
+    /// "additionalPlain". Sin ellos la IA no ve qué pide la oferta y la
+    /// puntuación la toma por mal explicada. Cada lista va como
+    /// "Título:" + sus viñetas, separando bloques con una línea en blanco.
+    /// </summary>
+    private static string? BuildDescription(LeverPosting p)
+    {
+        var intro = string.IsNullOrWhiteSpace(p.DescriptionPlain)
+            ? HtmlText.ToPlainText(p.Description)
+            : p.DescriptionPlain.Trim();
+
+        List<string> blocks = [];
+
+        if (!string.IsNullOrWhiteSpace(intro))
+        {
+            blocks.Add(intro);
+        }
+
+        foreach (var list in p.Lists ?? [])
+        {
+            var content = HtmlText.ToPlainText(list.Content);
+            if (content is null)
+            {
+                continue;
+            }
+
+            var title = list.Text?.Trim().TrimEnd(':');
+            blocks.Add(string.IsNullOrWhiteSpace(title) ? content : $"{title}:\n{content}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(p.AdditionalPlain))
+        {
+            blocks.Add(p.AdditionalPlain.Trim());
+        }
+
+        return blocks.Count > 0 ? string.Join("\n\n", blocks) : null;
     }
 
     // ── DTOs de la respuesta de Lever ───────────────────────────────────
@@ -89,9 +131,16 @@ public sealed class LeverProvider(
         [property: JsonPropertyName("hostedUrl")] string? HostedUrl,
         [property: JsonPropertyName("description")] string? Description,
         [property: JsonPropertyName("descriptionPlain")] string? DescriptionPlain,
+        [property: JsonPropertyName("lists")] LeverList[]? Lists,
+        [property: JsonPropertyName("additionalPlain")] string? AdditionalPlain,
         [property: JsonPropertyName("workplaceType")] string? WorkplaceType,
         [property: JsonPropertyName("createdAt")] long? CreatedAt,
         [property: JsonPropertyName("categories")] LeverCategories? Categories);
+
+    /// <summary>Bloque de la posting: título ("Requirements") y viñetas en HTML.</summary>
+    private sealed record LeverList(
+        [property: JsonPropertyName("text")] string? Text,
+        [property: JsonPropertyName("content")] string? Content);
 
     private sealed record LeverCategories(
         [property: JsonPropertyName("location")] string? Location,

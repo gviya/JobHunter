@@ -50,6 +50,8 @@ public sealed class AdzunaProviderTests
         offer.SalaryMin.Should().Be(45000m);
         offer.SalaryMax.Should().Be(60000m);
         offer.Location.Should().Be("Madrid, España");
+        // Adzuna trunca la descripción (~500 caracteres): es un extracto.
+        offer.DescriptionIsSnippet.Should().BeTrue();
     }
 
     [Fact]

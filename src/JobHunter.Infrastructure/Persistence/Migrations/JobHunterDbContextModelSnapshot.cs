@@ -63,6 +63,9 @@ namespace JobHunter.Infrastructure.Persistence.Migrations
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("DescriptionIsSnippet")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("DiscoveredAt")
                         .HasColumnType("TEXT");
 

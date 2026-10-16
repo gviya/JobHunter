@@ -225,6 +225,7 @@ public static partial class RunDailyPipeline
                 {
                     var analysis = await aiAnalysisService.AnalyzeAsync(offer, profile, ct);
 
+                    AiSignals.Apply(offer, analysis);
                     offer.Score = JobScoreCalculator.Calculate(offer, analysis, profile);
                     offer.IsAnalyzed = true;
 

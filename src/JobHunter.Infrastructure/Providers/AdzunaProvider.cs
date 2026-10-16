@@ -106,6 +106,7 @@ public sealed class AdzunaProvider(
             CompanyName = r.Company?.DisplayName ?? "(empresa desconocida)",
             Url = r.RedirectUrl ?? string.Empty,
             Description = r.Description,
+            DescriptionIsSnippet = true,
             SalaryMin = r.SalaryMin,
             SalaryMax = r.SalaryMax,
             Location = location,

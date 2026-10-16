@@ -74,6 +74,7 @@ public sealed class JoobleProviderTests
         offer.CompanyName.Should().Be("Beta Software");
         offer.Url.Should().Be("https://jooble.example/1234567890123");
         offer.Description.Should().Be("Buscamos desarrollador con experiencia en .NET .");
+        offer.DescriptionIsSnippet.Should().BeTrue(); // Jooble solo da un "snippet"
         offer.Location.Should().Be("Madrid");
         offer.WorkMode.Should().Be(WorkMode.Remote); // "Trabajo remoto" en type
         // El salary string de Jooble no se parsea todavía (TODO en el provider).

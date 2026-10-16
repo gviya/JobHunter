@@ -202,6 +202,119 @@ public sealed class JobScoreCalculatorTests
         score.TechScore.Should().Be(40);
     }
 
+    [Theory]
+    [InlineData("Adzuna")]
+    [InlineData("Jooble")]
+    [InlineData("Greenhouse")]
+    public void Calculate_ClienteFinal_DependeDelFlagDeLaOfertaNoDeLaFuente(string source)
+    {
+        // Regresión: solo Greenhouse/Lever marcaban cliente final, así que
+        // cualquier oferta de agregador puntuaba -10 por su fuente. Ahora el
+        // flag lo corrige la IA (AiSignals) y el cálculo solo mira el flag.
+        JobOffer OfferFrom(bool isClientFinal) => new()
+        {
+            ExternalId = "8",
+            SourceProvider = source,
+            Title = "Backend Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/8",
+            WorkMode = WorkMode.Remote,
+            IsClientFinal = isClientFinal,
+        };
+
+        JobScoreCalculator.Calculate(OfferFrom(true), Analysis(70), MadridProfile())
+            .ClientFinalScore.Should().Be(20);
+        JobScoreCalculator.Calculate(OfferFrom(false), Analysis(70), MadridProfile())
+            .ClientFinalScore.Should().Be(-10);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("Backend .NET.")]
+    public void Calculate_DescripcionSnippet_InfoQualityNeutra(string? description)
+    {
+        // Regresión: Adzuna/Jooble solo dan un extracto y se llevaban -25/-10
+        // fijos por la longitud, sin relación con la oferta real.
+        var offer = new JobOffer
+        {
+            ExternalId = "9",
+            SourceProvider = "Adzuna",
+            Title = "Backend Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/9",
+            Description = description,
+            DescriptionIsSnippet = true,
+            WorkMode = WorkMode.Remote,
+        };
+
+        var score = JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfile());
+
+        score.InfoQualityScore.Should().Be(0);
+    }
+
+    [Fact]
+    public void Calculate_EspaciosYSaltosDeRelleno_NoCuentanComoInformacion()
+    {
+        // ~300 caracteres de texto real repartidos con mucho relleno de
+        // espacios/saltos: mide el texto limpio, no la maquetación.
+        var padded = string.Join($"\n\n{new string(' ', 40)}\n", Enumerable.Repeat("Backend .NET con C# y SQL Server.", 9));
+        padded.Length.Should().BeGreaterThan(600); // en bruto caería en el tramo de 0
+
+        var offer = new JobOffer
+        {
+            ExternalId = "10",
+            SourceProvider = "Greenhouse",
+            Title = "Backend Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/10",
+            Description = padded,
+            WorkMode = WorkMode.Remote,
+        };
+
+        var score = JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfile());
+
+        score.InfoQualityScore.Should().Be(-10); // 250-599 caracteres limpios
+    }
+
+    [Theory]
+    [InlineData(WorkMode.Hybrid, -25)]
+    [InlineData(WorkMode.OnSite, -30)]
+    public void Calculate_ModoQueElPerfilNoAcepta_PuntuaComoNoConmutable(WorkMode mode, int expected)
+    {
+        // CommuteFilter descarta estos modos antes de analizar, pero la IA
+        // puede revelar DESPUÉS que una oferta "remota" es híbrida/presencial:
+        // aunque la ubicación sea conmutable, no debe sumar como aceptable.
+        var defaults = MadridProfile();
+        var remoteOnlyProfile = new UserProfile
+        {
+            TechWeights = defaults.TechWeights,
+            ExcludedTechs = defaults.ExcludedTechs,
+            City = defaults.City,
+            PreferredZones = defaults.PreferredZones,
+            ExcludedAreas = defaults.ExcludedAreas,
+            AcceptHybrid = false,
+            AcceptOnSite = false,
+        };
+
+        var offer = new JobOffer
+        {
+            ExternalId = "11",
+            SourceProvider = "Test",
+            Title = "Backend Developer",
+            CompanyName = "Acme",
+            Url = "https://example.com/11",
+            WorkMode = mode,
+            Location = "Hortaleza, Madrid", // conmutable y zona preferida
+        };
+
+        JobScoreCalculator.Calculate(offer, Analysis(70), remoteOnlyProfile)
+            .RemoteScore.Should().Be(expected);
+
+        // Con el perfil que sí acepta el modo, la misma oferta puntúa normal.
+        JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfile())
+            .RemoteScore.Should().Be(mode == WorkMode.Hybrid ? 20 : -10);
+    }
+
     [Fact]
     public void Calculate_CopiaRequisitosDelAnalisisAlScore()
     {
