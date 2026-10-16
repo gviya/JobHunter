@@ -44,7 +44,13 @@ public static partial class RunDailyPipeline
         {
             var report = new DailyReport();
 
-            // ── 1. BUSCAR (todos los providers en paralelo) ─────────────
+            // Ventana del informe y de los reintentos de análisis: lo
+            // descubierto antes se da por visto (o caducado).
+            var windowDays = Math.Max(1, profile.ReportWindowDays);
+            var since = report.GeneratedAt.AddDays(-windowDays);
+
+            // ── 1. BUSCAR (todos los providers en paralelo; los que no
+            //        filtran por keyword pasan antes el filtro de título) ──
             var found = await SearchAllAsync(cancellationToken);
             report.TotalFound = found.Count;
             logger.LogInformation("Búsqueda: {Total} ofertas de {Providers} providers.",
@@ -68,13 +74,14 @@ public static partial class RunDailyPipeline
             // ── 3. DEDUP SEMÁNTICO (embeddings de Ollama) ───────────────
             report.TotalDuplicates = await MarkSemanticDuplicatesAsync(newOffers, cancellationToken);
 
-            // ── 4 + 5. ANALIZAR + PUNTUAR ───────────────────────────────
-            report.TotalAnalyzed = await AnalyzeAndScoreAsync(newOffers, cancellationToken);
+            // ── 4 + 5. ANALIZAR + PUNTUAR (nuevas + pendientes de
+            //           ejecuciones anteriores) ────────────────────────────
+            report.TotalAnalyzed = await AnalyzeAndScoreAsync(newOffers, since, cancellationToken);
 
-            // ── 6. INFORME (top 15 + HTML) ──────────────────────────────
-            var top = await repository.GetTopScoredAsync(15, cancellationToken);
+            // ── 6. INFORME (top 15 de la ventana + HTML) ────────────────
+            var top = await repository.GetTopScoredAsync(since, 15, cancellationToken);
             report.TopOffers = [.. top];
-            report.HtmlContent = BuildHtml(report);
+            report.HtmlContent = BuildHtml(report, windowDays);
 
             await repository.SaveReportAsync(report, cancellationToken);
 
@@ -97,7 +104,21 @@ public static partial class RunDailyPipeline
         {
             try
             {
-                return await provider.SearchAsync(filter, ct);
+                var offers = await provider.SearchAsync(filter, ct);
+
+                if (provider.FiltersByKeyword || offers.Count == 0)
+                {
+                    return offers;
+                }
+
+                // Board completo de la empresa: se descarta lo que por título
+                // no es un puesto técnico ANTES de guardarlo y analizarlo.
+                var relevant = RelevanceFilter.Apply(offers, filter.Keywords, profile);
+                logger.LogInformation(
+                    "{Provider}: {Kept}/{Total} ofertas con título relevante (no filtra por keyword en origen).",
+                    provider.ProviderName, relevant.Count, offers.Count);
+
+                return relevant;
             }
             catch (Exception ex)
             {
@@ -178,11 +199,27 @@ public static partial class RunDailyPipeline
             return duplicates;
         }
 
-        private async Task<int> AnalyzeAndScoreAsync(List<JobOffer> newOffers, CancellationToken ct)
+        private async Task<int> AnalyzeAndScoreAsync(List<JobOffer> newOffers, DateTime since, CancellationToken ct)
         {
+            // No basta con las nuevas de hoy: una oferta cuyo análisis falló
+            // en otra ejecución (IA caída, créditos agotados...) ya existe en
+            // BD, así que la búsqueda no la vuelve a dar por nueva y se
+            // perdería. Se piden a BD todas las pendientes de la ventana (las
+            // nuevas de hoy incluidas); pasada la ventana se dan por caducadas,
+            // lo que acota también lo que puede costar una que falle siempre.
+            var pending = await repository.GetUnanalyzedAsync(since, ct);
+
+            var newIds = newOffers.Select(o => o.Id).ToHashSet();
+            var retries = pending.Count(o => !newIds.Contains(o.Id));
+            if (retries > 0)
+            {
+                logger.LogInformation(
+                    "Análisis: {Retries} ofertas pendientes de ejecuciones anteriores se reintentan.", retries);
+            }
+
             var analyzed = 0;
 
-            foreach (var offer in newOffers.Where(o => !o.IsDuplicate))
+            foreach (var offer in pending)
             {
                 try
                 {
@@ -240,7 +277,7 @@ public static partial class RunDailyPipeline
         // ── Generación del HTML del informe ─────────────────────────────
         // internal (no private) para poder verificar desde los tests que el
         // HTML incluye el filtro interactivo y las tarjetas bien formadas.
-        internal static string BuildHtml(DailyReport report)
+        internal static string BuildHtml(DailyReport report, int windowDays)
         {
             var sb = new StringBuilder();
 
@@ -284,6 +321,7 @@ public static partial class RunDailyPipeline
                   .tag.mode-unknown{background:#f0efec;color:#52514e}
                   .tag.seniority{background:rgba(42,120,214,.12);color:#1c5cab}
                   .tag.src{background:#fcfcfb;border:1px solid rgba(11,11,11,.14);color:#52514e}
+                  .tag.new{background:#111827;color:#fff;font-weight:600}
                   .tech{display:inline-block;background:#eef2fb;color:#1c5cab;font-size:12px;padding:2px 9px;border-radius:6px;margin:0 4px 4px 0}
                   .reqs{background:#f5f4f1;border-left:3px solid #2a78d6;border-radius:0 8px 8px 0;padding:9px 12px;margin:10px 0;font-size:13px;color:#3d3c39}
                   .reqs b{color:#0b0b0b}
@@ -306,9 +344,11 @@ public static partial class RunDailyPipeline
                 </style></head><body><div class="wrap">
                 """);
 
+            var newCount = report.TopOffers.Count(report.IsNewInThisRun);
+
             sb.Append($"""
                 <div class="header"><h1>JobHunter AI</h1>
-                <div class="sub">Informe del {report.GeneratedAt:yyyy-MM-dd HH:mm} UTC · top {report.TopOffers.Count} ofertas</div></div>
+                <div class="sub">Informe del {report.GeneratedAt:yyyy-MM-dd HH:mm} UTC · top {report.TopOffers.Count} ofertas de los últimos {windowDays} días · {newCount} nuevas</div></div>
                 <div class="metrics">
                   <div class="metric"><b>{report.TotalFound}</b><span>Encontradas</span></div>
                   <div class="metric"><b>{report.TotalNew}</b><span>Nuevas</span></div>
@@ -319,7 +359,7 @@ public static partial class RunDailyPipeline
 
             if (report.TopOffers.Count == 0)
             {
-                sb.Append("""<div class="empty">No hay ofertas puntuadas todavía.</div>""");
+                sb.Append($"""<div class="empty">No hay ofertas puntuadas en los últimos {windowDays} días.</div>""");
             }
             else
             {
@@ -377,6 +417,10 @@ public static partial class RunDailyPipeline
 
                 var href = SafeHref(offer.Url);
 
+                // Marca lo puntuado en esta ejecución: el resto ya salió en
+                // informes anteriores de la ventana.
+                var newTag = report.IsNewInThisRun(offer) ? """<span class="tag new">Nueva</span>""" : "";
+
                 sb.Append($"""
                     <div class="card" data-techs="{Encode(score?.AiTechList ?? "")}">
                       <div class="cardtop">
@@ -387,6 +431,7 @@ public static partial class RunDailyPipeline
                         <div class="scorebox"><span class="score {ScoreBand(total)}">{total} pts</span><div class="stars">{Stars(total)}</div></div>
                       </div>
                       <div class="rowtags">
+                        {newTag}
                         <span class="tag mode-{ModeClass(offer.WorkMode)}">{WorkModeLabel(offer.WorkMode)}</span>
                         {seniority}
                         <span class="tag src">{Encode(offer.SourceProvider)}</span>

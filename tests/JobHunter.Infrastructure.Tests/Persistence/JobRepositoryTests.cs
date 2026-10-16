@@ -35,8 +35,9 @@ public sealed class JobRepositoryTests : IAsyncLifetime
         return new JobHunterDbContext(options);
     }
 
-    private static JobOffer NewOffer(string externalId, string company) => new()
+    private static JobOffer NewOffer(string externalId, string company, DateTime? discoveredAt = null) => new()
     {
+        DiscoveredAt = discoveredAt ?? DateTime.UtcNow,
         ExternalId = externalId,
         SourceProvider = "Test",
         Title = "Backend .NET",
@@ -81,7 +82,7 @@ public sealed class JobRepositoryTests : IAsyncLifetime
         await using (var db = CreateContext())
         {
             var repo = new JobRepository(db);
-            var top = await repo.GetTopScoredAsync();
+            var top = await repo.GetTopScoredAsync(DateTime.UtcNow.AddDays(-7));
 
             top.Should().ContainSingle();
             top[0].Id.Should().Be(offerId);
@@ -149,5 +150,55 @@ public sealed class JobRepositoryTests : IAsyncLifetime
 
         latest.Should().NotBeNull();
         latest!.TotalNew.Should().Be(7);
+    }
+
+    [Fact]
+    public async Task GetTopScoredAsync_SoloIncluyeLoDescubiertoDentroDeLaVentana()
+    {
+        // Regresión: sin ventana el informe "diario" era el top histórico y
+        // repetía cada día las mismas ofertas, aunque ya hubieran caducado.
+        await using var db = CreateContext();
+        var repo = new JobRepository(db);
+
+        var reciente = NewOffer("reciente", "acme", DateTime.UtcNow.AddDays(-2));
+        var antigua = NewOffer("antigua", "acme", DateTime.UtcNow.AddDays(-30));
+
+        foreach (var (offer, total) in new[] { (reciente, 60), (antigua, 140) })
+        {
+            await repo.SaveAsync(offer);
+            offer.Score = new JobScore { JobOfferId = offer.Id, TotalScore = total };
+            offer.IsAnalyzed = true;
+            await repo.UpdateAsync(offer);
+        }
+
+        var top = await repo.GetTopScoredAsync(DateTime.UtcNow.AddDays(-7));
+
+        // La antigua puntúa más, pero queda fuera de la ventana.
+        top.Select(o => o.ExternalId).Should().Equal("reciente");
+    }
+
+    [Fact]
+    public async Task GetUnanalyzedAsync_DevuelvePendientesDeLaVentana_SinAnalizadasNiDuplicadas()
+    {
+        await using var db = CreateContext();
+        var repo = new JobRepository(db);
+
+        var pendienteAyer = NewOffer("ayer", "acme", DateTime.UtcNow.AddDays(-1));
+        var pendienteHoy = NewOffer("hoy", "acme");
+        var caducada = NewOffer("caducada", "acme", DateTime.UtcNow.AddDays(-30));
+        var analizada = NewOffer("analizada", "acme");
+        analizada.IsAnalyzed = true;
+        var duplicada = NewOffer("duplicada", "acme");
+        duplicada.IsDuplicate = true;
+
+        foreach (var offer in new[] { pendienteHoy, pendienteAyer, caducada, analizada, duplicada })
+        {
+            await repo.SaveAsync(offer);
+        }
+
+        var pending = await repo.GetUnanalyzedAsync(DateTime.UtcNow.AddDays(-7));
+
+        // Ordenadas de más antigua a más reciente.
+        pending.Select(o => o.ExternalId).Should().Equal("ayer", "hoy");
     }
 }

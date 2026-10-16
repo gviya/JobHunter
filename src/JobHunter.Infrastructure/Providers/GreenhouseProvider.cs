@@ -22,6 +22,10 @@ public sealed class GreenhouseProvider(
 
     public string ProviderName => "Greenhouse";
 
+    // El board devuelve TODAS las ofertas de la empresa (ventas, marketing...):
+    // el pipeline las filtra por título antes de analizarlas.
+    public bool FiltersByKeyword => false;
+
     public async Task<IReadOnlyList<JobOffer>> SearchAsync(SearchFilter filter, CancellationToken ct = default)
     {
         var tokens = _options.Greenhouse;
