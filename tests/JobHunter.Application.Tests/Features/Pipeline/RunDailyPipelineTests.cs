@@ -104,6 +104,13 @@ public sealed class RunDailyPipelineTests
             .Returns(similarity);
     }
 
+    // La IA lee todas las ofertas con el modo indicado (el que AiSignals
+    // deja en la oferta y, con él, en BD).
+    private void IaLeeComo(WorkMode workMode) =>
+        _ai.Setup(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AiAnalysisResult("resumen", "Senior", ["C#"], 80, [], [], "aplicar", [],
+                WorkMode: workMode));
+
     // Las lecturas por empresa y del top también salen del almacén simulado,
     // con los mismos filtros que JobRepository: así un test puede encadenar
     // varias ejecuciones y ver lo que la anterior dejó en BD.
@@ -396,12 +403,14 @@ public sealed class RunDailyPipelineTests
     }
 
     [Theory]
-    [InlineData("Barcelona, Cataluña", WorkMode.Unknown, "Madrid", false)]    // no conmutable: nunca suprime a la conmutable
-    [InlineData("Barcelona, Cataluña", WorkMode.Unknown, "Barcelona", true)]  // copia de la no conmutable: sí casa
-    [InlineData("Madrid", WorkMode.Unknown, "Barcelona, Cataluña", true)]     // conmutable: sí suprime a la no conmutable
-    [InlineData("España", WorkMode.Remote, "Madrid", true)]                   // remota: conmutable aunque diga solo el país
+    [InlineData("Barcelona, Cataluña", WorkMode.Unknown, false, "Madrid", false)]    // no conmutable: nunca suprime a la conmutable
+    [InlineData("Barcelona, Cataluña", WorkMode.Remote, false, "Madrid", false)]     // ni aunque el provider la marque Remote
+    [InlineData("Barcelona, Cataluña", WorkMode.Unknown, false, "Barcelona", true)]  // copia de la no conmutable: sí casa
+    [InlineData("Madrid", WorkMode.Unknown, false, "Barcelona, Cataluña", true)]     // conmutable: sí suprime a la no conmutable
+    [InlineData("España", WorkMode.Remote, true, "Madrid", true)]                    // remota confirmada por la IA: conmutable aunque diga solo el país
+    [InlineData("España", WorkMode.Remote, false, "Madrid", false)]                  // remota solo según el provider: no cuenta
     public async Task Handle_MismoTituloYaVistoEnBd_LaNoConmutableNuncaSuprimeALaConmutable(
-        string storedLocation, WorkMode storedMode, string newLocation, bool expectedDuplicate)
+        string storedLocation, WorkMode storedMode, bool storedAnalyzed, string newLocation, bool expectedDuplicate)
     {
         // Regresión (review: title-dedup-ignores-location, paso contra BD):
         // una "Desarrollador .NET" de Barcelona vista en los últimos 30 días
@@ -411,10 +420,16 @@ public sealed class RunDailyPipelineTests
         // remota guardada con "España" con su copia de "Madrid" y esta se
         // analizaba y se enviaba otra vez. La regla es asimétrica: solo la
         // dirección no conmutable → conmutable está prohibida.
+        // Regresión (review: r4-pipeline-1): el Remote de una fila sin
+        // analizar es la estimación del provider, no un dato; contarlo como
+        // conmutable dejaba que la gemela de Barcelona pendiente suprimiera a
+        // la de Madrid. Solo cuenta el Remote que confirmó la IA.
         OllamaCaido();
         _profile = PerfilMadrid();
+        var guardada = Offer("Desarrollador .NET", "Adzuna", "NTT DATA", location: storedLocation, workMode: storedMode);
+        guardada.IsAnalyzed = storedAnalyzed;
         _repository.Setup(r => r.GetRecentByCompanyAsync("ntt data", It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([Offer("Desarrollador .NET", "Adzuna", "NTT DATA", location: storedLocation, workMode: storedMode)]);
+            .ReturnsAsync([guardada]);
         var nueva = Offer("Desarrollador .NET", "Jooble", "NTT Data", location: newLocation);
 
         var report = await RunAsync(Provider(filtersByKeyword: true, nueva).Object);
@@ -426,11 +441,11 @@ public sealed class RunDailyPipelineTests
     }
 
     [Theory]
-    [InlineData("JSearch", "Madrid", "Jooble", "España")]
-    [InlineData("Greenhouse", null, "Adzuna", "España")]
-    [InlineData("Jooble", "España", "JSearch", "Madrid")]
+    [InlineData("JSearch", "Madrid", "Jooble", "España", true)]
+    [InlineData("Greenhouse", null, "Adzuna", "España", true)]
+    [InlineData("Jooble", "España", "JSearch", "Madrid", false)] // gana la de "Madrid", aunque traiga el snippet
     public async Task Handle_CopiasDeLaMismaRemotaConCiudadYConPais_SeFusionanEnElLote(
-        string providerA, string? locationA, string providerB, string? locationB)
+        string providerA, string? locationA, string providerB, string? locationB, bool keepsA)
     {
         // Regresión (review: r3-pipeline-1): la clave (empresa, título,
         // conmutable) separaba las copias entre fuentes de la misma remota
@@ -438,21 +453,26 @@ public sealed class RunDailyPipelineTests
         // otra solo el país: con City = Madrid, "Madrid" era conmutable y
         // "España" no. Cada copia se analizaba (segunda llamada de pago) y
         // las dos salían en el top.
+        // Regresión (review: r4-pipeline-1): la representante es la copia
+        // conmutable por ubicación, no la que el provider marca Remote: el
+        // Remote de una oferta nueva no está confirmado y una "España" que
+        // resultara híbrida se habría llevado por delante a la de Madrid.
         OllamaCaido();
         UsarAlmacenSimulado();
         _profile = PerfilMadrid();
         var a = Offer("Senior Backend Developer .NET", providerA, "acme",
             "Descripción completa con requisitos", locationA, WorkMode.Remote);
         var b = Offer("Senior Backend Developer .NET", providerB, "Acme", "Snippet", locationB, WorkMode.Remote);
+        var (kept, duplicate) = keepsA ? (a, b) : (b, a);
 
         var report = await RunAsync(Provider(filtersByKeyword: true, a, b).Object);
 
-        a.IsDuplicate.Should().BeFalse();
-        b.IsDuplicate.Should().BeTrue();
+        kept.IsDuplicate.Should().BeFalse();
+        duplicate.IsDuplicate.Should().BeTrue();
         _ai.Verify(x => x.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
         report.TotalDuplicates.Should().Be(1);
         report.TotalAnalyzed.Should().Be(1);
-        report.TopOffers.Should().Equal(a);
+        report.TopOffers.Should().Equal(kept);
     }
 
     [Theory]
@@ -488,6 +508,120 @@ public sealed class RunDailyPipelineTests
         segundoInforme.TotalAnalyzed.Should().Be(0);
         segundoInforme.TopOffers.Should().Equal(primera);
         segundoInforme.HasNewTopOffers().Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("JSearch", "Barcelona", WorkMode.Remote, WorkMode.Hybrid)] // job_is_remote de JSearch
+    [InlineData("Adzuna", "Barcelona", WorkMode.Remote, WorkMode.Remote)]  // la heurística marca Remote las dos
+    [InlineData("JSearch", "España", WorkMode.Remote, WorkMode.Unknown)]   // la misma oferta, con solo el país en una fuente
+    public async Task Handle_GemelaNoConmutableMarcadaRemotaPorElProvider_NoGanaEnElLoteALaDeMadrid(
+        string otherProvider, string otherLocation, WorkMode otherMode, WorkMode madridMode)
+    {
+        // Regresión (review: r4-pipeline-1, dentro del lote): el Remote que
+        // pone el provider (job_is_remote de JSearch, o la heurística, que
+        // prefiere Remote cuando el texto es ambiguo) contaba como
+        // conmutable, así que la copia de Barcelona o "España" empataba con la
+        // de Madrid y ganaba por descripción más larga. La IA la leía
+        // híbrida, se descartaba tras el análisis y la de Madrid, guardada ya
+        // como duplicada, no se analizaba nunca: top vacío y sin email.
+        OllamaCaido();
+        UsarAlmacenSimulado();
+        _profile = PerfilMadrid(acceptOnSite: false);
+        IaLeeComo(WorkMode.Hybrid);
+        var otra = Offer("Desarrollador .NET", otherProvider, "NTT DATA",
+            "Descripción completa del puesto: proyecto, requisitos, stack y condiciones", otherLocation, otherMode);
+        var madrid = Offer("Desarrollador .NET", "Adzuna", "NTT DATA", "Snippet de Madrid", "Madrid", madridMode);
+
+        var report = await RunAsync(Provider(filtersByKeyword: true, otra, madrid).Object);
+
+        madrid.IsDuplicate.Should().BeFalse();
+        madrid.Score.Should().NotBeNull();
+        _savedAsDuplicate.Should().Equal(otra.Id);
+        _ai.Verify(a => a.AnalyzeAsync(madrid, It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
+        _ai.Verify(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
+        report.TotalDuplicates.Should().Be(1);
+        report.TotalAnalyzed.Should().Be(1);
+        report.TopOffers.Should().Equal(madrid);
+        report.HasNewTopOffers().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Handle_GemelaMarcadaRemotaPorElProviderPendienteEnBd_NoSuprimeLaVacanteDeMadrid()
+    {
+        // Regresión (review: r4-pipeline-1, entre ejecuciones): la gemela de
+        // Barcelona que JSearch marca Remote se quedaba pendiente (la IA
+        // falló) y, al día siguiente, su Remote sin confirmar contaba como
+        // conmutable y suprimía a la de Madrid. Después se reintentaba, la IA
+        // la leía híbrida y se descartaba: ni la segunda ni la tercera
+        // ejecución tenían nada en el top.
+        OllamaCaido();
+        UsarAlmacenSimulado();
+        _profile = PerfilMadrid(acceptOnSite: false);
+        var iaCaida = true;
+        _ai.Setup(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()))
+            .Returns(() => iaCaida
+                ? Task.FromException<AiAnalysisResult>(new HttpRequestException("503 Service Unavailable"))
+                : Task.FromResult(new AiAnalysisResult("resumen", "Senior", ["C#"], 80, [], [], "aplicar", [],
+                    WorkMode: WorkMode.Hybrid)));
+        var barcelona = Offer("Desarrollador .NET", "JSearch", "NTT DATA",
+            "Descripción completa del puesto: proyecto, requisitos, stack y condiciones", "Barcelona", WorkMode.Remote);
+        var primera = await RunAsync(Provider(filtersByKeyword: true, barcelona).Object);
+
+        iaCaida = false;
+        var madrid = Offer("Desarrollador .NET", "Adzuna", "NTT DATA", "Snippet de Madrid", "Madrid", WorkMode.Hybrid);
+        var segunda = await RunAsync(Provider(filtersByKeyword: true, madrid).Object);
+        var tercera = await RunAsync(Provider(filtersByKeyword: true).Object);
+
+        primera.TotalAnalyzed.Should().Be(0);
+        _savedAsDuplicate.Should().BeEmpty();
+        // Barcelona se reintenta en la segunda y se descarta tras el análisis...
+        barcelona.IsAnalyzed.Should().BeTrue();
+        barcelona.Score.Should().BeNull();
+        // ...y la de Madrid sobrevive, se puntúa y se queda en el top.
+        madrid.Score.Should().NotBeNull();
+        segunda.TotalDuplicates.Should().Be(0);
+        segunda.TotalAnalyzed.Should().Be(2);
+        segunda.TopOffers.Should().Equal(madrid);
+        segunda.HasNewTopOffers().Should().BeTrue();
+        tercera.TopOffers.Should().Equal(madrid);
+    }
+
+    [Theory]
+    [InlineData("Barcelona", "Barcelona", "Barcelona, Cataluña")]
+    [InlineData("España", "Barcelona", "España")]
+    public async Task Handle_CopiasMarcadasRemotasDeUnaOfertaQueLaIaYaDescarto_NoSeVuelvenAAnalizar(
+        string firstLocation, string secondLocation, string thirdLocation)
+    {
+        // Regresión (review: r4-pipeline-2): la fila guardada lleva el modo
+        // que corrigió la IA (híbrida), pero la copia nueva el del provider
+        // (Remote). Ese Remote la hacía conmutable y la protegía de la fila
+        // no conmutable: cada copia entre fuentes de una oferta ya descartada
+        // se volvía a analizar (llamada de pago) y a descartar en cada
+        // ejecución. La protección de la oferta nueva es solo por ubicación.
+        OllamaCaido();
+        UsarAlmacenSimulado();
+        _profile = PerfilMadrid(acceptOnSite: false);
+        IaLeeComo(WorkMode.Hybrid);
+        var jsearch = Offer("Desarrollador .NET", "JSearch", "NTT DATA",
+            "Descripción completa del puesto", firstLocation, WorkMode.Remote);
+        var primera = await RunAsync(Provider(filtersByKeyword: true, jsearch).Object);
+
+        var jooble = Offer("Desarrollador .NET", "Jooble", "NTT Data", "Snippet", secondLocation, WorkMode.Remote);
+        var segunda = await RunAsync(Provider(filtersByKeyword: true, jooble).Object);
+
+        var adzuna = Offer("Desarrollador .NET", "Adzuna", "NTT DATA", "Otro snippet", thirdLocation, WorkMode.Remote);
+        var tercera = await RunAsync(Provider(filtersByKeyword: true, adzuna).Object);
+
+        primera.TotalAnalyzed.Should().Be(1);
+        jsearch.IsAnalyzed.Should().BeTrue();
+        jsearch.Score.Should().BeNull();
+        _savedAsDuplicate.Should().Equal(jooble.Id, adzuna.Id);
+        _ai.Verify(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
+        segunda.TotalDuplicates.Should().Be(1);
+        segunda.TotalAnalyzed.Should().Be(0);
+        tercera.TotalDuplicates.Should().Be(1);
+        tercera.TotalAnalyzed.Should().Be(0);
+        tercera.TopOffers.Should().BeEmpty();
     }
 
     [Theory]
@@ -638,19 +772,102 @@ public sealed class RunDailyPipelineTests
     }
 
     [Theory]
-    [InlineData("Barcelona, Cataluña", WorkMode.Unknown, "Madrid", false)]    // no conmutable: nunca suprime a la conmutable
-    [InlineData("Barcelona, Cataluña", WorkMode.Unknown, "Barcelona", true)]  // copia de la no conmutable: sí casa
-    [InlineData("Madrid", WorkMode.Unknown, "Barcelona, Cataluña", true)]     // conmutable: sí suprime a la no conmutable
-    [InlineData("España", WorkMode.Remote, "Madrid", true)]                   // remota: conmutable aunque diga solo el país
+    [InlineData(true)]  // las dos en el mismo lote
+    [InlineData(false)] // Barcelona guardada y pendiente (la IA falló) en una ejecución anterior
+    public async Task Handle_GemelaDeBarcelonaMarcadaRemotaConOllama_NoSuprimeLaVacanteDeMadrid(bool sameBatch)
+    {
+        // Regresión (review: r4-pipeline-1, en el semántico): el semántico
+        // tenía el mismo hueco que el de título. Con la gemela de Barcelona
+        // marcada Remote por el provider, en el lote se recorría primero (las
+        // dos "conmutables", gana la primera vista) y entre ejecuciones la
+        // fila pendiente contaba como conmutable: en los dos casos suprimía a
+        // la de Madrid, y Barcelona se descartaba después (híbrida).
+        UsarAlmacenSimulado();
+        OllamaConSimilitud(0.95f);
+        _profile = PerfilMadrid(acceptOnSite: false);
+        var iaCaida = !sameBatch;
+        _ai.Setup(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()))
+            .Returns(() => iaCaida
+                ? Task.FromException<AiAnalysisResult>(new HttpRequestException("503 Service Unavailable"))
+                : Task.FromResult(new AiAnalysisResult("resumen", "Senior", ["C#"], 80, [], [], "aplicar", [],
+                    WorkMode: WorkMode.Hybrid)));
+        var barcelona = Offer("Desarrollador .NET - Barcelona", "JSearch", "NTT DATA",
+            "Buscamos desarrollador .NET para proyecto en Barcelona", "Barcelona", WorkMode.Remote);
+        var madrid = Offer("Desarrollador .NET - Madrid", "Adzuna", "NTT DATA",
+            "Buscamos desarrollador .NET en Madrid", "Madrid", WorkMode.Hybrid);
+
+        DailyReport report;
+        if (sameBatch)
+        {
+            report = await RunAsync(Provider(filtersByKeyword: true, barcelona, madrid).Object);
+        }
+        else
+        {
+            await RunAsync(Provider(filtersByKeyword: true, barcelona).Object);
+            iaCaida = false;
+            report = await RunAsync(Provider(filtersByKeyword: true, madrid).Object);
+        }
+
+        madrid.IsDuplicate.Should().BeFalse();
+        madrid.Score.Should().NotBeNull();
+        // En el lote, Barcelona queda duplicada de Madrid; pendiente de la
+        // ejecución anterior, se reintenta y se descarta tras el análisis.
+        barcelona.IsDuplicate.Should().Be(sameBatch);
+        barcelona.Score.Should().BeNull();
+        report.TotalDuplicates.Should().Be(sameBatch ? 1 : 0);
+        report.TotalAnalyzed.Should().Be(sameBatch ? 1 : 2);
+        report.TopOffers.Should().Equal(madrid);
+    }
+
+    [Theory]
+    [InlineData("España", "España")]
+    [InlineData("Barcelona", "España")]
+    public async Task Handle_CopiaMarcadaRemotaDeUnaOfertaQueLaIaYaDescartoConOllama_NoSeVuelveAAnalizar(
+        string firstLocation, string secondLocation)
+    {
+        // Regresión (review: r4-pipeline-2, en el semántico): con Ollama
+        // levantado, la copia que el provider marca Remote de una oferta que
+        // la IA ya leyó híbrida en Barcelona o "España" se protegía igual de
+        // la fila descartada y se volvía a analizar. Títulos distintos para
+        // que solo el semántico pueda casarlas.
+        UsarAlmacenSimulado();
+        OllamaConSimilitud(0.95f);
+        _profile = PerfilMadrid(acceptOnSite: false);
+        IaLeeComo(WorkMode.Hybrid);
+        var jsearch = Offer("Desarrollador .NET", "JSearch", "NTT DATA",
+            "Descripción completa del puesto", firstLocation, WorkMode.Remote);
+        var primera = await RunAsync(Provider(filtersByKeyword: true, jsearch).Object);
+
+        var jooble = Offer("Programador C# .NET", "Jooble", "NTT Data", "Snippet", secondLocation, WorkMode.Remote);
+        var segunda = await RunAsync(Provider(filtersByKeyword: true, jooble).Object);
+
+        primera.TotalAnalyzed.Should().Be(1);
+        jsearch.Score.Should().BeNull();
+        jooble.IsDuplicate.Should().BeTrue();
+        _ai.Verify(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
+        segunda.TotalDuplicates.Should().Be(1);
+        segunda.TotalAnalyzed.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("Barcelona, Cataluña", WorkMode.Unknown, false, "Madrid", false)]    // no conmutable: nunca suprime a la conmutable
+    [InlineData("Barcelona, Cataluña", WorkMode.Remote, false, "Madrid", false)]     // ni aunque el provider la marque Remote
+    [InlineData("Barcelona, Cataluña", WorkMode.Unknown, false, "Barcelona", true)]  // copia de la no conmutable: sí casa
+    [InlineData("Madrid", WorkMode.Unknown, false, "Barcelona, Cataluña", true)]     // conmutable: sí suprime a la no conmutable
+    [InlineData("España", WorkMode.Remote, true, "Madrid", true)]                    // remota confirmada por la IA: conmutable aunque diga solo el país
+    [InlineData("España", WorkMode.Remote, false, "Madrid", false)]                  // remota solo según el provider: no cuenta
     public async Task Handle_SemanticoConOllama_LaNoConmutableNuncaSuprimeALaConmutable(
-        string storedLocation, WorkMode storedMode, string newLocation, bool expectedDuplicate)
+        string storedLocation, WorkMode storedMode, bool storedAnalyzed, string newLocation, bool expectedDuplicate)
     {
         // Regresión (review: r3-pipeline-2): la misma regla asimétrica que el
         // dedup por título, en el semántico. Títulos distintos para que solo
         // el semántico pueda casarlas.
+        // Regresión (review: r4-pipeline-1): en el semántico tampoco cuenta
+        // como conmutable el Remote sin confirmar de una fila sin analizar.
         OllamaConSimilitud(0.95f);
         _profile = PerfilMadrid();
         var guardada = Offer("Desarrollador .NET", "Adzuna", "NTT DATA", location: storedLocation, workMode: storedMode);
+        guardada.IsAnalyzed = storedAnalyzed;
         guardada.Embedding = [1f, 0f];
         _repository.Setup(r => r.GetRecentByCompanyAsync("ntt data", It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([guardada]);
