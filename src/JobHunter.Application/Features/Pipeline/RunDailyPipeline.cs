@@ -76,7 +76,7 @@ public static partial class RunDailyPipeline
             report.TotalNew = newOffers.Count;
 
             // ── 3. DEDUP SEMÁNTICO (embeddings de Ollama) ───────────────
-            var semanticDuplicates = await MarkSemanticDuplicatesAsync(newOffers, cancellationToken);
+            var semanticDuplicates = await MarkSemanticDuplicatesAsync(newOffers, since, cancellationToken);
             report.TotalDuplicates = titleDuplicates + semanticDuplicates;
 
             // ── 4 + 5. ANALIZAR + PUNTUAR (nuevas + pendientes de
@@ -186,10 +186,45 @@ public static partial class RunDailyPipeline
         private static readonly string UnknownCompanyKey = NormalizeCompany(JobOffer.UnknownCompany);
         private static readonly string UntitledTitleKey = NormalizeTitle(JobOffer.UntitledTitle);
 
+        // Sin empresa no hay clave fiable para ningún dedup por empresa: dos
+        // "Backend Developer" de empresa desconocida no son necesariamente la
+        // misma oferta. "Sin" es tanto lo que queda vacío tras normalizar como
+        // el marcador del provider; si el marcador contara como empresa,
+        // todas las ofertas anónimas con un título genérico (justo los que
+        // busca el candidato) se fusionarían en una, en el lote y durante los
+        // días del lookback contra BD.
+        private static bool HasCompanyKey(string? companyNormalized)
+            => companyNormalized is { Length: > 0 } c && c != UnknownCompanyKey;
+
+        // Solo una fila que aún representa a la oferta puede suprimir otra.
+        // Una duplicada nunca se analiza (y, guardada con un DiscoveredAt
+        // nuevo, alargaría la supresión copia a copia) y una sin analizar de
+        // fuera de la ventana ya no se reintenta: casar contra ellas suprimía
+        // la oferta para siempre sin que ninguna copia llegara a puntuarse.
+        private static bool IsLiveRepresentative(JobOffer stored, DateTime since)
+            => !stored.IsDuplicate && (stored.IsAnalyzed || stored.DiscoveredAt >= since);
+
+        // "Conmutable" para los dedups: el candidato puede coger la oferta
+        // por su ubicación. Una remota lo es siempre (la ubicación no importa),
+        // y así las copias de la misma remota con "Madrid" en una fuente y
+        // "España" en otra se reconocen. En filas guardadas el modo puede ser
+        // ya el corregido por la IA.
+        private bool IsCommutableForDedup(JobOffer offer)
+            => offer.WorkMode == WorkMode.Remote || CommuteFilter.IsCommutable(offer.Location, profile);
+
+        // Regla asimétrica de los dos dedups: una representante no conmutable
+        // NUNCA suprime una oferta conmutable (las consultoras publican el
+        // mismo título y el mismo texto por oficina, y la de Barcelona tiraba
+        // la de Madrid, la única que el candidato puede coger). En cualquier
+        // otro caso sí: una clave simétrica también separaba las copias entre
+        // fuentes de la misma remota y cada una se analizaba y se enviaba.
+        private static bool CanSuppress(bool representativeCommutable, bool offerCommutable)
+            => representativeCommutable || !offerCommutable;
+
         /// <summary>
-        /// Dedup determinista por (empresa normalizada, título normalizado,
-        /// conmutable): la misma oferta publicada en Adzuna + JSearch + Jooble,
-        /// o republicada por la empresa con otro id, se analizaría (IA de pago)
+        /// Dedup determinista por (empresa normalizada, título normalizado):
+        /// la misma oferta publicada en Adzuna + JSearch + Jooble, o
+        /// republicada por la empresa con otro id, se analizaría (IA de pago)
         /// y saldría en el top dos o tres veces. El dedup semántico también
         /// la detecta, pero depende de Ollama y se salta entero si no está
         /// levantado; este paso es barato y funciona siempre.
@@ -202,41 +237,37 @@ public static partial class RunDailyPipeline
         /// vacantes con el mismo título en la misma empresa dentro de
         /// <see cref="DuplicateLookbackDays"/> días cuentan como una sola...
         ///
-        /// ...salvo que una sea conmutable para el perfil y la otra no
-        /// (<see cref="CommuteFilter.IsCommutable"/>): las consultoras publican
-        /// el mismo título una vez por oficina, y sin esa parte de la clave la
-        /// vacante de Barcelona podía quedarse como representante y tirar la
-        /// de Madrid, la única que el candidato puede coger. Localización vacía
-        /// o perfil sin ciudad cuentan como conmutables, así que las copias de
-        /// la misma oferta entre fuentes siguen fusionándose.
+        /// ...con la regla de <see cref="CanSuppress"/>: en el lote se queda
+        /// como representante la conmutable (<see cref="IsCommutableForDedup"/>)
+        /// antes que la más informativa, y contra BD una fila no conmutable no
+        /// suprime una oferta conmutable. Así la vacante de Madrid nunca se
+        /// pierde frente a su gemela de Barcelona, y las copias de una misma
+        /// remota con ubicaciones distintas siguen fusionándose.
         /// </summary>
         private async Task<int> MarkSameTitleDuplicatesAsync(
             List<JobOffer> newOffers, DateTime since, CancellationToken ct)
         {
-            // Sin empresa o sin título no hay clave fiable: dos "Backend
-            // Developer" de empresa desconocida no son necesariamente la misma
-            // oferta. "Sin" es tanto lo que queda vacío tras normalizar como
-            // el marcador del provider; si el marcador contara como empresa,
-            // todas las ofertas anónimas con un título genérico (justo los que
-            // busca el candidato) se fusionarían en una, en el lote y durante
-            // los días del lookback contra BD.
+            // Sin empresa o sin título (vacío o el marcador "(sin título)")
+            // no hay clave fiable: esas ofertas no entran en este dedup.
             var keyed = newOffers
-                .Where(o => o.CompanyNormalized is { Length: > 0 } c && c != UnknownCompanyKey)
-                .Select(o => (
-                    Offer: o,
-                    Title: NormalizeTitle(o.Title),
-                    Commutable: CommuteFilter.IsCommutable(o.Location, profile)))
+                .Where(o => HasCompanyKey(o.CompanyNormalized))
+                .Select(o => (Offer: o, Title: NormalizeTitle(o.Title), Commutable: IsCommutableForDedup(o)))
                 .Where(x => x.Title.Length > 0 && x.Title != UntitledTitleKey)
                 .ToList();
 
             // 1) Dentro del lote, en memoria (nada del lote está aún en BD).
-            //    Se conserva la más informativa: la descripción completa del
-            //    ATS vale más que el snippet de un agregador. OrderBy es
-            //    estable: a igual longitud, gana la primera vista.
+            //    Primero la conmutable: si queda alguna, la representante lo
+            //    es y suprimir al resto cumple la regla asimétrica. Después la
+            //    más informativa: la descripción completa del ATS vale más que
+            //    el snippet de un agregador. OrderBy es estable: a igualdad,
+            //    gana la primera vista.
             var inBatch = 0;
-            foreach (var group in keyed.GroupBy(x => (x.Offer.CompanyNormalized!, x.Title, x.Commutable)))
+            foreach (var group in keyed.GroupBy(x => (x.Offer.CompanyNormalized!, x.Title)))
             {
-                var kept = group.OrderByDescending(x => x.Offer.Description?.Length ?? 0).First().Offer;
+                var kept = group
+                    .OrderByDescending(x => x.Commutable)
+                    .ThenByDescending(x => x.Offer.Description?.Length ?? 0)
+                    .First().Offer;
 
                 foreach (var (offer, _, _) in group)
                 {
@@ -258,20 +289,13 @@ public static partial class RunDailyPipeline
                 if (!recentByCompany.TryGetValue(company, out var recent))
                 {
                     var stored = await repository.GetRecentByCompanyAsync(company, DuplicateLookbackDays, ct);
-
-                    // Solo cuentan las filas que aún representan a la oferta.
-                    // Una duplicada nunca se analiza (y, guardada con un
-                    // DiscoveredAt nuevo, alargaría la supresión copia a copia)
-                    // y una sin analizar de fuera de la ventana ya no se
-                    // reintenta: casar contra ellas suprimía la oferta para
-                    // siempre sin que ninguna copia llegara a puntuarse.
                     recent = [.. stored
-                        .Where(o => !o.IsDuplicate && (o.IsAnalyzed || o.DiscoveredAt >= since))
-                        .Select(o => (o.Id, NormalizeTitle(o.Title), CommuteFilter.IsCommutable(o.Location, profile)))];
+                        .Where(o => IsLiveRepresentative(o, since))
+                        .Select(o => (o.Id, NormalizeTitle(o.Title), IsCommutableForDedup(o)))];
                     recentByCompany[company] = recent;
                 }
 
-                if (recent.Any(r => r.Id != offer.Id && r.Title == title && r.Commutable == commutable))
+                if (recent.Any(r => r.Id != offer.Id && r.Title == title && CanSuppress(r.Commutable, commutable)))
                 {
                     offer.IsDuplicate = true;
                     againstDb++;
@@ -285,15 +309,28 @@ public static partial class RunDailyPipeline
             return inBatch + againstDb;
         }
 
-        private async Task<int> MarkSemanticDuplicatesAsync(List<JobOffer> newOffers, CancellationToken ct)
+        /// <summary>
+        /// Dedup semántico con las mismas reglas que el de título: sin clave
+        /// de empresa no compara, solo cuentan las representantes vivas
+        /// (<see cref="IsLiveRepresentative"/>) y una no conmutable nunca
+        /// suprime una conmutable (<see cref="CanSuppress"/>). Sin ellas, con
+        /// Ollama levantado se repetían las pérdidas que el dedup por título
+        /// ya evitaba: el texto de plantilla de la vacante de Madrid se parece
+        /// por encima del umbral al de su gemela de Barcelona.
+        /// </summary>
+        private async Task<int> MarkSemanticDuplicatesAsync(List<JobOffer> newOffers, DateTime since, CancellationToken ct)
         {
             var duplicates = 0;
 
-            foreach (var offer in newOffers)
+            // Las conmutables primero (OrderBy es estable): como en el lote del
+            // dedup por título, si dos gemelas llegan juntas la representante
+            // es la conmutable y la otra se marca contra ella, no al revés.
+            foreach (var offer in newOffers.OrderByDescending(IsCommutableForDedup))
             {
                 // Ya marcada por el dedup de título: no hace falta gastar
-                // una llamada de embeddings para confirmarlo.
-                if (offer.IsDuplicate)
+                // una llamada de embeddings para confirmarlo. Sin empresa
+                // tampoco: no hay con qué compararla de forma fiable.
+                if (offer.IsDuplicate || !HasCompanyKey(offer.CompanyNormalized))
                 {
                     continue;
                 }
@@ -304,11 +341,15 @@ public static partial class RunDailyPipeline
                     var embedding = await embeddingService.GetEmbeddingAsync(text, ct);
                     offer.Embedding = embedding;
 
+                    var commutable = IsCommutableForDedup(offer);
                     var recent = await repository.GetRecentByCompanyAsync(offer.CompanyNormalized!, DuplicateLookbackDays, ct);
 
                     foreach (var other in recent)
                     {
-                        if (other.Id == offer.Id || other.Embedding is not { Length: > 0 })
+                        if (other.Id == offer.Id
+                            || other.Embedding is not { Length: > 0 }
+                            || !IsLiveRepresentative(other, since)
+                            || !CanSuppress(IsCommutableForDedup(other), commutable))
                         {
                             continue;
                         }
