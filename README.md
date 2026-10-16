@@ -35,7 +35,11 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
    estructurados de la fuente si los hay (`workplaceType` de Lever,
    `job_is_remote` de JSearch) y si no de una heurística por campos: título
    y ubicación mandan sobre la descripción, y "híbrido con 2 días de
-   teletrabajo" o "no es remoto" ya no cuentan como remoto.
+   teletrabajo" o "no es remoto" ya no cuentan como remoto. Ante la duda
+   gana remoto: un falso remoto lo corrige la IA al analizar, mientras que
+   un falso híbrido/presencial lo descartaría este filtro antes de que la
+   IA lo viera (p. ej. "100% remoto" gana a un "Blazor Hybrid" en el stack
+   o a "no se permite teletrabajar desde el extranjero").
 3. **Deduplica** en tres pasos: exacto por `(ExternalId, SourceProvider)`;
    por empresa + título normalizados (sin acentos ni marcadores de género),
    dentro de la ejecución y contra los últimos 30 días, quedándose con la
@@ -43,12 +47,17 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
    misma oferta publicada en Adzuna, JSearch y Jooble se analiza una sola
    vez; y semántico por similitud coseno de embeddings (Ollama) contra
    ofertas recientes de la misma empresa. Dos vacantes con el mismo título
-   en la misma empresa en ese plazo cuentan como una.
+   en la misma empresa en ese plazo cuentan como una, con dos salvaguardas:
+   la copia de otra ciudad nunca tapa a la de tu ciudad ni a una remota
+   (se queda la conmutable), y las ofertas sin empresa o sin título no se
+   fusionan por título.
 4. **Analiza** cada oferta nueva con IA (Claude Haiku u Ollama local) contra
    el perfil del candidato (resumen, seniority, techs, pros/contras,
    recomendación). La IA también dice si la empresa es cliente final o
    consultora/agencia y cuál es el modo de trabajo real según el texto; si
-   lo sabe, corrige lo que supuso la fuente antes de puntuar. Las que
+   lo sabe, corrige lo que supuso la fuente antes de puntuar; si con eso la
+   oferta resulta ser un modo o una ubicación que el perfil no acepta, se
+   descarta tras el análisis (no se puntúa ni sale en el informe). Las que
    fallaron en ejecuciones anteriores (IA caída, créditos agotados...) se
    reintentan mientras estén dentro de la ventana del informe
    (`ReportWindowDays`, 7 días por defecto).
@@ -168,9 +177,8 @@ Resumen del modelo de puntuación/filtrado que alimenta:
   híbrido solo si la localización menciona `City` o una `PreferredZones`
   (+15, +5 si es zona preferida) y no menciona una `ExcludedAreas`;
   presencial igual pero penalizado (-10). Lo que no cumple se descarta
-  antes del análisis de IA; si la IA revela después que una oferta "remota"
-  es híbrida/presencial y no encaja (o el perfil no acepta ese modo), se
-  hunde (-25/-30).
+  antes del análisis de IA, y lo mismo pasa después del análisis si la IA
+  revela que una oferta "remota" es híbrida/presencial y no encaja.
 - **Cliente final** +20, consultora/agencia -10, no se sabe 0 (lo decide la
   IA leyendo la oferta, no la fuente).
 - **Calidad de la información** — según la longitud de la descripción ya

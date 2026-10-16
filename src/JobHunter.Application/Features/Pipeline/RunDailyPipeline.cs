@@ -205,39 +205,43 @@ public static partial class RunDailyPipeline
             => !stored.IsDuplicate && (stored.IsAnalyzed || stored.DiscoveredAt >= since);
 
         // Conmutable POR UBICACIÓN: lo que dice CommuteFilter.IsCommutable
-        // (sin ubicación, o sin ciudad en el perfil, también cuenta). Es lo
-        // único que protege a una oferta NUEVA en los dedups, porque su
-        // WorkMode todavía es la estimación del provider: la heurística
-        // prefiere Remote cuando el texto es ambiguo y JSearch pasa
-        // job_is_remote tal cual. Con ese Remote contando como conmutable, la
-        // gemela de Barcelona o "España" empataba con la de Madrid de verdad,
-        // podía quedarse de representante y, descartada tras el análisis
-        // (híbrida), se llevaba por delante a la de Madrid.
+        // (sin ubicación, o sin ciudad en el perfil, también cuenta).
         private bool IsLocationCommutable(JobOffer offer)
             => CommuteFilter.IsCommutable(offer.Location, profile);
 
-        // Lado de la representante: puede suprimir a una oferta conmutable si
-        // es conmutable por ubicación o si su Remote lo confirmó la IA
-        // (analizada y con WorkMode Remote, el modo que AiSignals dejó en BD):
-        // así la remota guardada con "España" casa con su copia de "Madrid".
-        // El Remote de una fila sin analizar es solo el del provider y no
-        // cuenta.
+        // Lado de la oferta NUEVA: está protegida si es conmutable por
+        // ubicación o si el provider la marca Remote. Ese Remote es solo una
+        // estimación (la heurística prefiere Remote cuando el texto es ambiguo
+        // y JSearch pasa job_is_remote tal cual), pero sin él una remota de
+        // verdad con "España" (lo habitual) la suprimía cualquier gemela no
+        // conmutable de la misma empresa, p. ej. la oficina de Barcelona que
+        // la IA ya descartó, y se perdía para siempre. El precio asumido: la
+        // copia marcada Remote de una oferta ya descartada se vuelve a
+        // analizar (una llamada de IA) y la IA la descarta otra vez.
+        private bool IsProtectedOffer(JobOffer offer)
+            => IsLocationCommutable(offer) || offer.WorkMode == WorkMode.Remote;
+
+        // Lado de la representante guardada: cuenta como conmutable si lo es
+        // por ubicación o si su Remote lo confirmó la IA (analizada y con
+        // WorkMode Remote, el modo que AiSignals dejó en BD): así la remota
+        // guardada con "España" casa con su copia de "Madrid". El Remote de
+        // una fila sin analizar es solo el del provider y no cuenta: si no, la
+        // gemela de Barcelona marcada Remote por error suprimía a la de
+        // Madrid y, descartada tras el análisis (híbrida), se perdían las dos.
+        // (Si la IA no devuelve modo, AiSignals conserva el del provider y ese
+        // Remote se toma por confirmado: limitación conocida.)
         private bool IsCommutableRepresentative(JobOffer representative)
             => IsLocationCommutable(representative)
                || (representative.IsAnalyzed && representative.WorkMode == WorkMode.Remote);
 
-        // Regla asimétrica de los dos dedups: una oferta conmutable por
-        // ubicación solo la suprime una representante conmutable
+        // Regla asimétrica de los dos dedups: una oferta protegida
+        // (IsProtectedOffer) solo la suprime una representante conmutable
         // (IsCommutableRepresentative). Las consultoras publican el mismo
         // título y el mismo texto por oficina, y la de Barcelona tiraba la de
-        // Madrid, la única que el candidato puede coger, también cuando el
-        // provider la marcaba Remote. Una oferta no conmutable por ubicación
-        // la suprime cualquiera, aunque el provider la marque Remote: si no,
-        // cada copia entre fuentes de una oferta que la IA ya descartó
-        // (híbrida en Barcelona) se volvía a analizar, pagando, en cada
-        // ejecución.
-        private static bool CanSuppress(bool representativeCommutable, bool offerLocationCommutable)
-            => representativeCommutable || !offerLocationCommutable;
+        // Madrid, la única que el candidato puede coger, o la remota. Una
+        // oferta no protegida la suprime cualquier representante viva.
+        private static bool CanSuppress(bool representativeCommutable, bool offerProtected)
+            => representativeCommutable || !offerProtected;
 
         // Orden de preferencia de la representante, en el lote del dedup por
         // título y en el recorrido del semántico: primero la conmutable por
@@ -273,11 +277,12 @@ public static partial class RunDailyPipeline
         /// (<see cref="IsLocationCommutable"/>) antes que la que el provider
         /// marca Remote y que la más informativa, y contra BD solo una fila
         /// conmutable por ubicación o remota confirmada por la IA suprime una
-        /// oferta conmutable por ubicación. Así la vacante de Madrid nunca se
-        /// pierde frente a su gemela de Barcelona (marcada Remote o no), las
-        /// copias de una misma remota con ubicaciones distintas siguen
-        /// fusionándose y las copias de una oferta que la IA ya descartó no se
-        /// vuelven a analizar.
+        /// oferta protegida (<see cref="IsProtectedOffer"/>: conmutable por
+        /// ubicación o marcada Remote). Así la vacante de Madrid nunca se
+        /// pierde frente a su gemela de Barcelona (marcada Remote o no), una
+        /// remota de verdad no la tapa la oficina descartada de la misma
+        /// empresa, y las copias de una misma remota con ubicaciones distintas
+        /// siguen fusionándose.
         /// </summary>
         private async Task<int> MarkSameTitleDuplicatesAsync(
             List<JobOffer> newOffers, DateTime since, CancellationToken ct)
@@ -286,7 +291,7 @@ public static partial class RunDailyPipeline
             // no hay clave fiable: esas ofertas no entran en este dedup.
             var keyed = newOffers
                 .Where(o => HasCompanyKey(o.CompanyNormalized))
-                .Select(o => (Offer: o, Title: NormalizeTitle(o.Title), LocationCommutable: IsLocationCommutable(o)))
+                .Select(o => (Offer: o, Title: NormalizeTitle(o.Title), Protected: IsProtectedOffer(o)))
                 .Where(x => x.Title.Length > 0 && x.Title != UntitledTitleKey)
                 .ToList();
 
@@ -314,7 +319,7 @@ public static partial class RunDailyPipeline
             var recentByCompany = new Dictionary<string, List<(Guid Id, string Title, bool Commutable)>>();
             var againstDb = 0;
 
-            foreach (var (offer, title, locationCommutable) in keyed.Where(x => !x.Offer.IsDuplicate))
+            foreach (var (offer, title, offerProtected) in keyed.Where(x => !x.Offer.IsDuplicate))
             {
                 var company = offer.CompanyNormalized!;
                 if (!recentByCompany.TryGetValue(company, out var recent))
@@ -326,7 +331,7 @@ public static partial class RunDailyPipeline
                     recentByCompany[company] = recent;
                 }
 
-                if (recent.Any(r => r.Id != offer.Id && r.Title == title && CanSuppress(r.Commutable, locationCommutable)))
+                if (recent.Any(r => r.Id != offer.Id && r.Title == title && CanSuppress(r.Commutable, offerProtected)))
                 {
                     offer.IsDuplicate = true;
                     againstDb++;
@@ -343,9 +348,10 @@ public static partial class RunDailyPipeline
         /// <summary>
         /// Dedup semántico con las mismas reglas que el de título: sin clave
         /// de empresa no compara, solo cuentan las representantes vivas
-        /// (<see cref="IsLiveRepresentative"/>) y una oferta conmutable por
-        /// ubicación solo la suprime una representante conmutable por
-        /// ubicación o remota confirmada por la IA (<see cref="CanSuppress"/>).
+        /// (<see cref="IsLiveRepresentative"/>) y una oferta protegida
+        /// (<see cref="IsProtectedOffer"/>) solo la suprime una representante
+        /// conmutable por ubicación o remota confirmada por la IA
+        /// (<see cref="CanSuppress"/>).
         /// Sin ellas, con Ollama levantado se repetían las pérdidas que el
         /// dedup por título ya evitaba: el texto de plantilla de la vacante de
         /// Madrid se parece por encima del umbral al de su gemela de Barcelona.
@@ -374,7 +380,7 @@ public static partial class RunDailyPipeline
                     var embedding = await embeddingService.GetEmbeddingAsync(text, ct);
                     offer.Embedding = embedding;
 
-                    var locationCommutable = IsLocationCommutable(offer);
+                    var offerProtected = IsProtectedOffer(offer);
                     var recent = await repository.GetRecentByCompanyAsync(offer.CompanyNormalized!, DuplicateLookbackDays, ct);
 
                     foreach (var other in recent)
@@ -382,7 +388,7 @@ public static partial class RunDailyPipeline
                         if (other.Id == offer.Id
                             || other.Embedding is not { Length: > 0 }
                             || !IsLiveRepresentative(other, since)
-                            || !CanSuppress(IsCommutableRepresentative(other), locationCommutable))
+                            || !CanSuppress(IsCommutableRepresentative(other), offerProtected))
                         {
                             continue;
                         }

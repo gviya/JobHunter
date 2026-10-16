@@ -589,15 +589,15 @@ public sealed class RunDailyPipelineTests
     [Theory]
     [InlineData("Barcelona", "Barcelona", "Barcelona, Cataluña")]
     [InlineData("España", "Barcelona", "España")]
-    public async Task Handle_CopiasMarcadasRemotasDeUnaOfertaQueLaIaYaDescarto_NoSeVuelvenAAnalizar(
+    public async Task Handle_CopiasMarcadasRemotasDeUnaOfertaQueLaIaYaDescarto_SeReanalizanPeroNuncaLleganAlTop(
         string firstLocation, string secondLocation, string thirdLocation)
     {
-        // Regresión (review: r4-pipeline-2): la fila guardada lleva el modo
-        // que corrigió la IA (híbrida), pero la copia nueva el del provider
-        // (Remote). Ese Remote la hacía conmutable y la protegía de la fila
-        // no conmutable: cada copia entre fuentes de una oferta ya descartada
-        // se volvía a analizar (llamada de pago) y a descartar en cada
-        // ejecución. La protección de la oferta nueva es solo por ubicación.
+        // Compromiso asumido: la copia nueva que el provider marca Remote está
+        // protegida (IsProtectedOffer), así que la fila ya descartada por la
+        // IA (híbrida) no la suprime y cada copia entre fuentes cuesta una
+        // llamada de IA más. Es el precio de no perder remotas de verdad con
+        // "España" (ver Handle_OficinaDescartadaDeLaMismaEmpresa_NoTapaALaRemotaDeVerdad).
+        // Lo que no puede pasar es que llegue al top ni dispare el email.
         OllamaCaido();
         UsarAlmacenSimulado();
         _profile = PerfilMadrid(acceptOnSite: false);
@@ -613,15 +613,57 @@ public sealed class RunDailyPipelineTests
         var tercera = await RunAsync(Provider(filtersByKeyword: true, adzuna).Object);
 
         primera.TotalAnalyzed.Should().Be(1);
-        jsearch.IsAnalyzed.Should().BeTrue();
-        jsearch.Score.Should().BeNull();
-        _savedAsDuplicate.Should().Equal(jooble.Id, adzuna.Id);
-        _ai.Verify(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
-        segunda.TotalDuplicates.Should().Be(1);
-        segunda.TotalAnalyzed.Should().Be(0);
-        tercera.TotalDuplicates.Should().Be(1);
-        tercera.TotalAnalyzed.Should().Be(0);
-        tercera.TopOffers.Should().BeEmpty();
+        segunda.TotalAnalyzed.Should().Be(1);
+        tercera.TotalAnalyzed.Should().Be(1);
+        _savedAsDuplicate.Should().BeEmpty();
+        foreach (var copy in new[] { jsearch, jooble, adzuna })
+        {
+            copy.IsAnalyzed.Should().BeTrue();
+            copy.Score.Should().BeNull(); // descartada tras el análisis
+        }
+
+        foreach (var report in new[] { primera, segunda, tercera })
+        {
+            report.TopOffers.Should().BeEmpty();
+            report.HasNewTopOffers().Should().BeFalse();
+        }
+    }
+
+    [Theory]
+    [InlineData(WorkMode.Unknown)]
+    [InlineData(WorkMode.Remote)]
+    public async Task Handle_OficinaDescartadaDeLaMismaEmpresa_NoTapaALaRemotaDeVerdad(WorkMode barcelonaTag)
+    {
+        // Regresión (review final: la protección de la oferta nueva solo por
+        // ubicación): una remota en España casi siempre llega con "España",
+        // que no es conmutable para City=Madrid. Con eso, la oficina de
+        // Barcelona de la misma empresa y mismo título, ya analizada y
+        // descartada por la IA (híbrida), la suprimía: se guardaba como
+        // duplicada, nunca se analizaba y el dedup exacto impedía que
+        // volviera. Se perdía justo la oferta que el candidato más quiere.
+        OllamaCaido();
+        UsarAlmacenSimulado();
+        _profile = PerfilMadrid(acceptOnSite: false);
+        _ai.Setup(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobOffer o, UserProfile _, CancellationToken _) =>
+                new AiAnalysisResult("resumen", "Senior", ["C#"], 80, [], [], "aplicar", [],
+                    WorkMode: o.Location == "Barcelona" ? WorkMode.Hybrid : WorkMode.Remote));
+
+        var barcelona = Offer("Desarrollador .NET", "Adzuna", "NTT DATA", "Oficina de Barcelona", "Barcelona", barcelonaTag);
+        await RunAsync(Provider(filtersByKeyword: true, barcelona).Object);
+
+        var remota = Offer("Desarrollador .NET", "JSearch", "NTT DATA",
+            "Puesto 100% remoto desde cualquier punto de España.", "España", WorkMode.Remote);
+        var segunda = await RunAsync(Provider(filtersByKeyword: true, remota).Object);
+
+        barcelona.IsAnalyzed.Should().BeTrue();
+        barcelona.Score.Should().BeNull(); // descartada tras el análisis
+        remota.IsDuplicate.Should().BeFalse();
+        remota.Score.Should().NotBeNull();
+        segunda.TotalDuplicates.Should().Be(0);
+        segunda.TotalAnalyzed.Should().Be(1);
+        segunda.TopOffers.Should().Equal(remota);
+        segunda.HasNewTopOffers().Should().BeTrue();
     }
 
     [Theory]
@@ -822,14 +864,14 @@ public sealed class RunDailyPipelineTests
     [Theory]
     [InlineData("España", "España")]
     [InlineData("Barcelona", "España")]
-    public async Task Handle_CopiaMarcadaRemotaDeUnaOfertaQueLaIaYaDescartoConOllama_NoSeVuelveAAnalizar(
+    public async Task Handle_CopiaMarcadaRemotaDeUnaOfertaQueLaIaYaDescartoConOllama_SeReanalizaPeroNoLlegaAlTop(
         string firstLocation, string secondLocation)
     {
-        // Regresión (review: r4-pipeline-2, en el semántico): con Ollama
-        // levantado, la copia que el provider marca Remote de una oferta que
-        // la IA ya leyó híbrida en Barcelona o "España" se protegía igual de
-        // la fila descartada y se volvía a analizar. Títulos distintos para
-        // que solo el semántico pueda casarlas.
+        // El mismo compromiso que en el dedup por título, en el semántico:
+        // la copia marcada Remote por el provider está protegida frente a la
+        // fila que la IA ya descartó, así que se vuelve a analizar (una
+        // llamada más), pero la IA la descarta otra vez y nunca llega al top.
+        // Títulos distintos para que solo el semántico pueda casarlas.
         UsarAlmacenSimulado();
         OllamaConSimilitud(0.95f);
         _profile = PerfilMadrid(acceptOnSite: false);
@@ -843,10 +885,12 @@ public sealed class RunDailyPipelineTests
 
         primera.TotalAnalyzed.Should().Be(1);
         jsearch.Score.Should().BeNull();
-        jooble.IsDuplicate.Should().BeTrue();
-        _ai.Verify(a => a.AnalyzeAsync(It.IsAny<JobOffer>(), It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
-        segunda.TotalDuplicates.Should().Be(1);
-        segunda.TotalAnalyzed.Should().Be(0);
+        jooble.IsDuplicate.Should().BeFalse();
+        jooble.Score.Should().BeNull();
+        segunda.TotalDuplicates.Should().Be(0);
+        segunda.TotalAnalyzed.Should().Be(1);
+        segunda.TopOffers.Should().BeEmpty();
+        segunda.HasNewTopOffers().Should().BeFalse();
     }
 
     [Theory]
