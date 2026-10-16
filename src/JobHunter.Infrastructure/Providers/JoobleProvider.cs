@@ -89,8 +89,8 @@ public sealed class JoobleProvider(
         {
             ExternalId = id,
             SourceProvider = ProviderName,
-            Title = r.Title ?? "(sin título)",
-            CompanyName = string.IsNullOrWhiteSpace(r.Company) ? "(empresa desconocida)" : r.Company,
+            Title = r.Title ?? JobOffer.UntitledTitle,
+            CompanyName = string.IsNullOrWhiteSpace(r.Company) ? JobOffer.UnknownCompany : r.Company,
             Url = r.Link ?? string.Empty,
             Description = description,
             DescriptionIsSnippet = true,

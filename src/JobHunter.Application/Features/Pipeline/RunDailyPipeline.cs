@@ -72,7 +72,7 @@ public static partial class RunDailyPipeline
                 commutableOffers.Count, localOffers.Count);
 
             // ── 2. DEDUP EXACTO + POR EMPRESA Y TÍTULO + guardar nuevas ─
-            var (newOffers, titleDuplicates) = await SaveNewOffersAsync(commutableOffers, cancellationToken);
+            var (newOffers, titleDuplicates) = await SaveNewOffersAsync(commutableOffers, since, cancellationToken);
             report.TotalNew = newOffers.Count;
 
             // ── 3. DEDUP SEMÁNTICO (embeddings de Ollama) ───────────────
@@ -139,7 +139,7 @@ public static partial class RunDailyPipeline
         /// ellas se marcaron como duplicadas por título.
         /// </summary>
         private async Task<(List<JobOffer> Saved, int TitleDuplicates)> SaveNewOffersAsync(
-            IReadOnlyList<JobOffer> found, CancellationToken ct)
+            IReadOnlyList<JobOffer> found, DateTime since, CancellationToken ct)
         {
             var newOffers = new List<JobOffer>();
             var seen = new HashSet<string>();
@@ -165,7 +165,7 @@ public static partial class RunDailyPipeline
             }
 
             // Antes de guardar: así las duplicadas llegan a BD ya marcadas.
-            var titleDuplicates = await MarkSameTitleDuplicatesAsync(newOffers, ct);
+            var titleDuplicates = await MarkSameTitleDuplicatesAsync(newOffers, since, ct);
 
             // Las duplicadas también se guardan: mañana el dedup exacto las
             // reconoce por (ExternalId, SourceProvider) y no vuelven a pasar
@@ -179,10 +179,17 @@ public static partial class RunDailyPipeline
             return (newOffers, titleDuplicates);
         }
 
+        // Claves normalizadas de los marcadores que ponen los providers cuando
+        // la fuente no da empresa o título: "(empresa desconocida)" normaliza
+        // a "empresa desconocida", que NO es vacío, así que comprobar solo la
+        // longitud no basta para saber que no hay dato.
+        private static readonly string UnknownCompanyKey = NormalizeCompany(JobOffer.UnknownCompany);
+        private static readonly string UntitledTitleKey = NormalizeTitle(JobOffer.UntitledTitle);
+
         /// <summary>
-        /// Dedup determinista por (empresa normalizada, título normalizado):
-        /// la misma oferta publicada en Adzuna + JSearch + Jooble, o
-        /// republicada por la empresa con otro id, se analizaría (IA de pago)
+        /// Dedup determinista por (empresa normalizada, título normalizado,
+        /// conmutable): la misma oferta publicada en Adzuna + JSearch + Jooble,
+        /// o republicada por la empresa con otro id, se analizaría (IA de pago)
         /// y saldría en el top dos o tres veces. El dedup semántico también
         /// la detecta, pero depende de Ollama y se salta entero si no está
         /// levantado; este paso es barato y funciona siempre.
@@ -193,16 +200,33 @@ public static partial class RunDailyPipeline
         /// duplicados entre fuentes se escapan; para esos queda el semántico.
         /// Compromiso asumido (el mismo que ya hace el semántico): dos
         /// vacantes con el mismo título en la misma empresa dentro de
-        /// <see cref="DuplicateLookbackDays"/> días cuentan como una sola.
+        /// <see cref="DuplicateLookbackDays"/> días cuentan como una sola...
+        ///
+        /// ...salvo que una sea conmutable para el perfil y la otra no
+        /// (<see cref="CommuteFilter.IsCommutable"/>): las consultoras publican
+        /// el mismo título una vez por oficina, y sin esa parte de la clave la
+        /// vacante de Barcelona podía quedarse como representante y tirar la
+        /// de Madrid, la única que el candidato puede coger. Localización vacía
+        /// o perfil sin ciudad cuentan como conmutables, así que las copias de
+        /// la misma oferta entre fuentes siguen fusionándose.
         /// </summary>
-        private async Task<int> MarkSameTitleDuplicatesAsync(List<JobOffer> newOffers, CancellationToken ct)
+        private async Task<int> MarkSameTitleDuplicatesAsync(
+            List<JobOffer> newOffers, DateTime since, CancellationToken ct)
         {
-            // Sin empresa o sin título (vacíos tras normalizar) no hay clave
-            // fiable: dos "Backend Developer" de empresa desconocida no son
-            // necesariamente la misma oferta.
+            // Sin empresa o sin título no hay clave fiable: dos "Backend
+            // Developer" de empresa desconocida no son necesariamente la misma
+            // oferta. "Sin" es tanto lo que queda vacío tras normalizar como
+            // el marcador del provider; si el marcador contara como empresa,
+            // todas las ofertas anónimas con un título genérico (justo los que
+            // busca el candidato) se fusionarían en una, en el lote y durante
+            // los días del lookback contra BD.
             var keyed = newOffers
-                .Select(o => (Offer: o, Title: NormalizeTitle(o.Title)))
-                .Where(x => x.Offer.CompanyNormalized is { Length: > 0 } && x.Title.Length > 0)
+                .Where(o => o.CompanyNormalized is { Length: > 0 } c && c != UnknownCompanyKey)
+                .Select(o => (
+                    Offer: o,
+                    Title: NormalizeTitle(o.Title),
+                    Commutable: CommuteFilter.IsCommutable(o.Location, profile)))
+                .Where(x => x.Title.Length > 0 && x.Title != UntitledTitleKey)
                 .ToList();
 
             // 1) Dentro del lote, en memoria (nada del lote está aún en BD).
@@ -210,11 +234,11 @@ public static partial class RunDailyPipeline
             //    ATS vale más que el snippet de un agregador. OrderBy es
             //    estable: a igual longitud, gana la primera vista.
             var inBatch = 0;
-            foreach (var group in keyed.GroupBy(x => (x.Offer.CompanyNormalized!, x.Title)))
+            foreach (var group in keyed.GroupBy(x => (x.Offer.CompanyNormalized!, x.Title, x.Commutable)))
             {
                 var kept = group.OrderByDescending(x => x.Offer.Description?.Length ?? 0).First().Offer;
 
-                foreach (var (offer, _) in group)
+                foreach (var (offer, _, _) in group)
                 {
                     if (!ReferenceEquals(offer, kept))
                     {
@@ -225,20 +249,29 @@ public static partial class RunDailyPipeline
             }
 
             // 2) Contra lo reciente en BD, con una consulta por empresa.
-            var recentByCompany = new Dictionary<string, List<(Guid Id, string Title)>>();
+            var recentByCompany = new Dictionary<string, List<(Guid Id, string Title, bool Commutable)>>();
             var againstDb = 0;
 
-            foreach (var (offer, title) in keyed.Where(x => !x.Offer.IsDuplicate))
+            foreach (var (offer, title, commutable) in keyed.Where(x => !x.Offer.IsDuplicate))
             {
                 var company = offer.CompanyNormalized!;
                 if (!recentByCompany.TryGetValue(company, out var recent))
                 {
                     var stored = await repository.GetRecentByCompanyAsync(company, DuplicateLookbackDays, ct);
-                    recent = [.. stored.Select(o => (o.Id, NormalizeTitle(o.Title)))];
+
+                    // Solo cuentan las filas que aún representan a la oferta.
+                    // Una duplicada nunca se analiza (y, guardada con un
+                    // DiscoveredAt nuevo, alargaría la supresión copia a copia)
+                    // y una sin analizar de fuera de la ventana ya no se
+                    // reintenta: casar contra ellas suprimía la oferta para
+                    // siempre sin que ninguna copia llegara a puntuarse.
+                    recent = [.. stored
+                        .Where(o => !o.IsDuplicate && (o.IsAnalyzed || o.DiscoveredAt >= since))
+                        .Select(o => (o.Id, NormalizeTitle(o.Title), CommuteFilter.IsCommutable(o.Location, profile)))];
                     recentByCompany[company] = recent;
                 }
 
-                if (recent.Any(r => r.Id != offer.Id && r.Title == title))
+                if (recent.Any(r => r.Id != offer.Id && r.Title == title && r.Commutable == commutable))
                 {
                     offer.IsDuplicate = true;
                     againstDb++;
@@ -319,7 +352,11 @@ public static partial class RunDailyPipeline
                     "Análisis: {Retries} ofertas pendientes de ejecuciones anteriores se reintentan.", retries);
             }
 
+            // "analyzed" cuenta todo lo que pasó por la IA (TotalAnalyzed del
+            // informe), descartadas tras el análisis incluidas: se gastó la
+            // llamada igual.
             var analyzed = 0;
+            var discardedAfterAnalysis = 0;
 
             foreach (var offer in pending)
             {
@@ -328,6 +365,29 @@ public static partial class RunDailyPipeline
                     var analysis = await aiAnalysisService.AnalyzeAsync(offer, profile, ct);
 
                     AiSignals.Apply(offer, analysis);
+
+                    // CommuteFilter corrió con el modo que estimó el provider;
+                    // la IA puede revelar ahora que la oferta "remota" es
+                    // híbrida o presencial en un modo o sitio que el perfil no
+                    // acepta. Se descarta igual que lo habría hecho el filtro
+                    // previo: una penalización fija no basta para hundirla
+                    // (el resto de términos puede sumar más de +100) y llegaba
+                    // a encabezar el top y a disparar el email. Se marca como
+                    // analizada para no reintentarla, y sin Score
+                    // GetTopScoredAsync nunca la incluye.
+                    if (!CommuteFilter.IsAcceptable(offer, profile))
+                    {
+                        offer.IsAnalyzed = true;
+                        await repository.UpdateAsync(offer, ct);
+                        analyzed++;
+                        discardedAfterAnalysis++;
+
+                        logger.LogInformation(
+                            "Oferta {OfferId} descartada tras el análisis: la IA la lee como {WorkMode} en {Location}, que el perfil no acepta.",
+                            offer.Id, offer.WorkMode, offer.Location ?? "(sin ubicación)");
+                        continue;
+                    }
+
                     offer.Score = JobScoreCalculator.Calculate(offer, analysis, profile);
                     offer.IsAnalyzed = true;
 
@@ -339,6 +399,13 @@ public static partial class RunDailyPipeline
                     // Un error analizando una oferta no detiene al resto.
                     logger.LogWarning("Error analizando la oferta {OfferId}: {Error}", offer.Id, ex.Message);
                 }
+            }
+
+            if (discardedAfterAnalysis > 0)
+            {
+                logger.LogInformation(
+                    "Análisis: {Discarded} de {Analyzed} ofertas analizadas descartadas porque la IA reveló un modo de trabajo que el perfil no acepta.",
+                    discardedAfterAnalysis, analyzed);
             }
 
             return analyzed;

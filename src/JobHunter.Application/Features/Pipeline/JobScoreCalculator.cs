@@ -17,9 +17,13 @@ namespace JobHunter.Application.Features.Pipeline;
 ///    si la zona es de las preferidas del perfil), no conmutable -25;
 ///    OnSite conmutable -10, no conmutable -30. Un modo que el perfil no
 ///    acepta (AcceptHybrid/AcceptOnSite = false) puntúa como el no
-///    conmutable. CommuteFilter descarta ambos casos antes de analizar, pero
-///    la IA puede revelar DESPUÉS que una oferta "remota" es híbrida o
-///    presencial: entonces no se descarta, se hunde aquí.
+///    conmutable. CommuteFilter descarta ambos casos antes de analizar, y si
+///    la IA revela DESPUÉS que una oferta "remota" es híbrida o presencial
+///    en un modo o sitio que el perfil no acepta, el pipeline la descarta
+///    tras el análisis sin llegar a puntuarla (una penalización fija no
+///    garantiza hundirla: el resto de términos puede compensarla). Aquí se
+///    mantiene la penalización como valor por defecto defensivo para quien
+///    puntúe sin pasar por ese filtro.
 ///  - Cliente final +20 / consultora -10 / no se sabe 0.
 ///  - Salario (SalaryMax): ≥70k +25, ≥60k +20, ≥50k +15, ≥40k +5, &lt;40k -10, null -5.
 ///  - Techs conocidas: cada tech del perfil (TechWeights, escala 0-10) que

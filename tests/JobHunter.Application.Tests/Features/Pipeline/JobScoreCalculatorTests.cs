@@ -301,9 +301,10 @@ public sealed class JobScoreCalculatorTests
     [InlineData(WorkMode.OnSite, -30)]
     public void Calculate_ModoQueElPerfilNoAcepta_PuntuaComoNoConmutable(WorkMode mode, int expected)
     {
-        // CommuteFilter descarta estos modos antes de analizar, pero la IA
-        // puede revelar DESPUÉS que una oferta "remota" es híbrida/presencial:
-        // aunque la ubicación sea conmutable, no debe sumar como aceptable.
+        // El pipeline descarta estos modos antes de analizar y también si la
+        // IA los revela después; el calculador los penaliza igual como valor
+        // defensivo: aunque la ubicación sea conmutable, no deben sumar como
+        // aceptables.
         var defaults = MadridProfile();
         var remoteOnlyProfile = new UserProfile
         {

@@ -105,8 +105,8 @@ public sealed class AdzunaProvider(
         {
             ExternalId = r.Id ?? Guid.NewGuid().ToString(),
             SourceProvider = ProviderName,
-            Title = r.Title ?? "(sin título)",
-            CompanyName = r.Company?.DisplayName ?? "(empresa desconocida)",
+            Title = r.Title ?? JobOffer.UntitledTitle,
+            CompanyName = r.Company?.DisplayName ?? JobOffer.UnknownCompany,
             Url = r.RedirectUrl ?? string.Empty,
             Description = description,
             DescriptionIsSnippet = true,

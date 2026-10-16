@@ -7,6 +7,21 @@ namespace JobHunter.Domain.Entities;
 /// </summary>
 public sealed class JobOffer
 {
+    /// <summary>
+    /// Valor que ponen los providers cuando la fuente no da la empresa. Es un
+    /// marcador, no una empresa: el dedup por empresa + título lo trata como
+    /// "sin empresa" (si no, todas las ofertas anónimas con el mismo título
+    /// se fusionarían en una).
+    /// </summary>
+    public const string UnknownCompany = "(empresa desconocida)";
+
+    /// <summary>
+    /// Valor que ponen los providers cuando la fuente no da el título. Igual
+    /// que <see cref="UnknownCompany"/>: un marcador que nunca sirve de clave
+    /// de dedup.
+    /// </summary>
+    public const string UntitledTitle = "(sin título)";
+
     public Guid Id { get; init; } = Guid.NewGuid();
     public required string ExternalId { get; init; }
     public required string SourceProvider { get; init; }

@@ -73,7 +73,7 @@ public sealed class GreenhouseProvider(
         {
             ExternalId = job.Id?.ToString() ?? Guid.NewGuid().ToString(),
             SourceProvider = ProviderName,
-            Title = job.Title ?? "(sin título)",
+            Title = job.Title ?? JobOffer.UntitledTitle,
             CompanyName = token,
             Url = job.AbsoluteUrl ?? string.Empty,
             Description = description,

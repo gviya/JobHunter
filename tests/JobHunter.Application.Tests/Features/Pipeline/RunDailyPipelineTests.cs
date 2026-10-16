@@ -24,10 +24,21 @@ public sealed class RunDailyPipelineTests
     private readonly List<JobOffer> _saved = [];
     private readonly HashSet<Guid> _savedAsDuplicate = [];
 
-    private readonly UserProfile _profile = new()
+    // Sin ciudad: el filtro de desplazamiento no aplica y todo es conmutable.
+    // Los tests de ubicación lo sustituyen por PerfilMadrid().
+    private UserProfile _profile = new()
     {
         SearchKeywords = ["backend .NET"],
         ReportWindowDays = 7,
+    };
+
+    private static UserProfile PerfilMadrid(bool acceptOnSite = true) => new()
+    {
+        SearchKeywords = ["backend .NET"],
+        ReportWindowDays = 7,
+        City = "Madrid",
+        AcceptHybrid = true,
+        AcceptOnSite = acceptOnSite,
     };
 
     public RunDailyPipelineTests()
@@ -60,19 +71,44 @@ public sealed class RunDailyPipelineTests
     }
 
     private static JobOffer Offer(
-        string title, string provider = "Test", string company = "Acme", string? description = null) => new()
+        string title,
+        string provider = "Test",
+        string company = "Acme",
+        string? description = null,
+        string? location = null,
+        WorkMode workMode = WorkMode.Unknown,
+        DateTime? discoveredAt = null) => new()
     {
         ExternalId = Guid.NewGuid().ToString(),
         SourceProvider = provider,
         Title = title,
         CompanyName = company,
         Description = description,
+        Location = location,
+        WorkMode = workMode,
+        DiscoveredAt = discoveredAt ?? DateTime.UtcNow,
         Url = "https://example.com",
     };
 
     private void OllamaCaido() =>
         _embeddings.Setup(e => e.GetEmbeddingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Connection refused (localhost:11434)"));
+
+    // Las lecturas por empresa y del top también salen del almacén simulado,
+    // con los mismos filtros que JobRepository: así un test puede encadenar
+    // varias ejecuciones y ver lo que la anterior dejó en BD.
+    private void UsarAlmacenSimulado()
+    {
+        _repository.Setup(r => r.GetRecentByCompanyAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string company, int days, CancellationToken _) =>
+                [.. _saved.Where(o => o.CompanyNormalized == company && o.DiscoveredAt >= DateTime.UtcNow.AddDays(-days))]);
+        _repository.Setup(r => r.GetTopScoredAsync(It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DateTime since, int count, CancellationToken _) =>
+                [.. _saved
+                    .Where(o => o.Score != null && !o.IsDuplicate && o.DiscoveredAt >= since)
+                    .OrderByDescending(o => o.Score!.TotalScore)
+                    .Take(count)]);
+    }
 
     private static Mock<IJobProvider> Provider(bool filtersByKeyword, params JobOffer[] offers)
     {
@@ -249,16 +285,152 @@ public sealed class RunDailyPipelineTests
     {
         // Sin empresa no hay clave fiable: dos "Backend Developer" de empresa
         // desconocida no son necesariamente la misma oferta.
+        // Regresión (review: unknown-company-title-dedup): este test usaba
+        // solo company "", que ningún provider envía, y pasaba por el motivo
+        // equivocado. Jooble/Adzuna/JSearch ponen JobOffer.UnknownCompany,
+        // que normaliza a una clave NO vacía, y las dos anónimas de Madrid y
+        // Barcelona se fusionaban (se perdía la de Madrid).
         var acme = Offer("Backend Developer", "Adzuna", company: "Acme S.L.");
         var globex = Offer("Backend Developer", "Adzuna", company: "Globex");
-        var anonima1 = Offer("Backend Developer", "Jooble", company: "");
-        var anonima2 = Offer("Backend Developer", "Jooble", company: "");
+        var anonimaMadrid = Offer("Backend Developer", "Jooble", company: JobOffer.UnknownCompany, location: "Madrid");
+        var anonimaBarcelona = Offer("Backend Developer", "Jooble", company: JobOffer.UnknownCompany,
+            description: "Snippet algo más largo", location: "Barcelona");
+        var vacia1 = Offer("Backend Developer", "Jooble", company: "");
+        var vacia2 = Offer("Backend Developer", "Jooble", company: "  ");
 
-        var report = await RunAsync(Provider(filtersByKeyword: true, acme, globex, anonima1, anonima2).Object);
+        var report = await RunAsync(Provider(filtersByKeyword: true,
+            acme, globex, anonimaMadrid, anonimaBarcelona, vacia1, vacia2).Object);
 
         _saved.Should().OnlyContain(o => !o.IsDuplicate);
         report.TotalDuplicates.Should().Be(0);
-        report.TotalAnalyzed.Should().Be(4);
+        report.TotalAnalyzed.Should().Be(6);
+    }
+
+    [Fact]
+    public async Task Handle_EmpresaDesconocidaConElMismoTituloEnDosEjecuciones_NoSeFusionan()
+    {
+        // Regresión (review: unknown-company-placeholder-merges): el marcador
+        // "(empresa desconocida)" actuaba como una empresa real. En la 1ª
+        // ejecución las dos anónimas del lote se fusionaban; en la 2ª, la
+        // nueva casaba contra las guardadas y se marcaba duplicada. Durante
+        // 30 días toda oferta anónima con un título genérico se perdía sin
+        // analizar y sin llegar al email.
+        OllamaCaido();
+        UsarAlmacenSimulado();
+        var jooble = Offer("Desarrollador Backend .NET", "Jooble", JobOffer.UnknownCompany,
+            "Fintech de producto, 100% remoto", location: "España");
+        var adzuna = Offer("Desarrollador Backend .NET", "Adzuna", JobOffer.UnknownCompany,
+            "Consultora", location: "Valencia");
+
+        var primera = await RunAsync(Provider(filtersByKeyword: true, jooble, adzuna).Object);
+
+        var jsearch = Offer("Desarrollador Backend .NET", "JSearch", JobOffer.UnknownCompany, location: "Madrid");
+        var segunda = await RunAsync(Provider(filtersByKeyword: true, jsearch).Object);
+
+        _saved.Should().Equal(jooble, adzuna, jsearch);
+        _saved.Should().OnlyContain(o => !o.IsDuplicate && o.IsAnalyzed);
+        primera.TotalDuplicates.Should().Be(0);
+        primera.TotalAnalyzed.Should().Be(2);
+        segunda.TotalDuplicates.Should().Be(0);
+        segunda.TotalAnalyzed.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Handle_OfertasSinTituloEnLaMismaEmpresa_NoSeFusionan()
+    {
+        // Regresión (review: unknown-company-placeholder-merges, parte del
+        // título): Greenhouse/Lever/agregadores ponen "(sin título)" cuando la
+        // fuente no da título, y dos ofertas así de la misma empresa
+        // compartían clave, en el lote y contra BD.
+        OllamaCaido();
+        _repository.Setup(r => r.GetRecentByCompanyAsync("acme", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Offer(JobOffer.UntitledTitle, "Lever")]);
+        var primera = Offer(JobOffer.UntitledTitle, "Greenhouse", description: "Oferta de pagos");
+        var segunda = Offer(JobOffer.UntitledTitle, "Lever", description: "Oferta de plataforma, otra cosa");
+
+        var report = await RunAsync(Provider(filtersByKeyword: true, primera, segunda).Object);
+
+        _saved.Should().OnlyContain(o => !o.IsDuplicate);
+        report.TotalDuplicates.Should().Be(0);
+        report.TotalAnalyzed.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Handle_MismoTituloEnOficinaConmutableYNoConmutable_NoSeFusionan()
+    {
+        // Regresión (review: title-dedup-ignores-location): las consultoras
+        // publican el mismo título por oficina. El grupo del lote se quedaba
+        // con la de descripción más larga (Barcelona) y marcaba duplicada la
+        // de Madrid, la única que el candidato puede coger.
+        OllamaCaido();
+        _profile = PerfilMadrid();
+        var barcelona = Offer("Desarrollador .NET", "Adzuna", "NTT DATA",
+            "Snippet algo más largo de la oficina de Barcelona", location: "Barcelona, Cataluña");
+        var madrid = Offer("Desarrollador .NET", "Adzuna", "NTT DATA",
+            "Snippet de Madrid", location: "Madrid, Comunidad de Madrid");
+        var copiaSinUbicacion = Offer("Desarrollador .NET", "Jooble", "NTT Data", "Corto");
+
+        var report = await RunAsync(Provider(filtersByKeyword: true, barcelona, madrid, copiaSinUbicacion).Object);
+
+        barcelona.IsDuplicate.Should().BeFalse();
+        madrid.IsDuplicate.Should().BeFalse();
+        // Sin ubicación cuenta como conmutable: las copias entre fuentes de la
+        // oferta de Madrid se siguen fusionando.
+        copiaSinUbicacion.IsDuplicate.Should().BeTrue();
+        _ai.Verify(a => a.AnalyzeAsync(madrid, It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
+        report.TotalDuplicates.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Handle_MismoTituloYaVistoEnBdEnOficinaNoConmutable_NoSuprimeLaConmutable()
+    {
+        // Regresión (review: title-dedup-ignores-location, paso contra BD):
+        // una "Desarrollador .NET" de Barcelona vista en los últimos 30 días
+        // suprimía la de Madrid de hoy. Una copia de la de Barcelona sí debe
+        // seguir casando con ella.
+        OllamaCaido();
+        _profile = PerfilMadrid();
+        _repository.Setup(r => r.GetRecentByCompanyAsync("ntt data", It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Offer("Desarrollador .NET", "Adzuna", "NTT DATA", location: "Barcelona, Cataluña")]);
+        var madrid = Offer("Desarrollador .NET", "Jooble", "NTT Data", location: "Madrid");
+        var copiaDeBarcelona = Offer("Desarrollador .NET", "JSearch", "NTT DATA", location: "Barcelona");
+
+        var report = await RunAsync(Provider(filtersByKeyword: true, madrid, copiaDeBarcelona).Object);
+
+        madrid.IsDuplicate.Should().BeFalse();
+        copiaDeBarcelona.IsDuplicate.Should().BeTrue();
+        _ai.Verify(a => a.AnalyzeAsync(madrid, It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
+        report.TotalDuplicates.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(10, false, false, false)] // sin analizar y fuera de la ventana: ya no se reintenta
+    [InlineData(1, false, true, false)]   // duplicada: nunca se analiza (cadenas de duplicadas)
+    [InlineData(1, false, false, true)]   // pendiente dentro de la ventana: aún se analizará
+    [InlineData(20, true, false, true)]   // analizada: ya salió en un informe
+    public async Task Handle_TituloYaVistoEnBd_SoloCuentaSiLaFilaAunRepresentaALaOferta(
+        int daysAgo, bool isAnalyzed, bool isDuplicate, bool expectedDuplicate)
+    {
+        // Regresión (review: dedup-against-dead-unanalyzed-original): el
+        // lookback del dedup (30 días) es más largo que la ventana de
+        // reintentos (7). Con la IA caída más de una semana, la original sin
+        // analizar caducaba y aun así suprimía las copias nuevas: nada de esa
+        // oferta llegaba a puntuarse nunca. Lo mismo con una fila duplicada,
+        // que además se guarda con un DiscoveredAt nuevo y alargaba el plazo.
+        OllamaCaido();
+        var original = Offer("Backend Engineer", "Lever", discoveredAt: DateTime.UtcNow.AddDays(-daysAgo));
+        original.IsAnalyzed = isAnalyzed;
+        original.IsDuplicate = isDuplicate;
+        _repository.Setup(r => r.GetRecentByCompanyAsync("acme", 30, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([original]);
+        var copia = Offer("Backend Engineer", "Adzuna");
+
+        var report = await RunAsync(Provider(filtersByKeyword: true, copia).Object);
+
+        copia.IsDuplicate.Should().Be(expectedDuplicate);
+        _ai.Verify(a => a.AnalyzeAsync(copia, It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()),
+            expectedDuplicate ? Times.Never() : Times.Once());
+        report.TotalDuplicates.Should().Be(expectedDuplicate ? 1 : 0);
     }
 
     [Fact]
@@ -316,6 +488,69 @@ public sealed class RunDailyPipelineTests
         globex.IsDuplicate.Should().BeTrue();
         acme.IsDuplicate.Should().BeFalse();
         report.TotalDuplicates.Should().Be(2);
+        report.TotalAnalyzed.Should().Be(1);
+    }
+
+    // ── Modo de trabajo revelado por la IA ──────────────────────────────
+
+    [Theory]
+    [InlineData(WorkMode.OnSite, "Madrid")]              // modo que el perfil no acepta
+    [InlineData(WorkMode.Hybrid, "Barcelona, Cataluña")] // modo aceptado, pero no conmutable
+    public async Task Handle_IaRevelaUnModoQueElPerfilNoAcepta_SeDescartaTrasAnalizarSinPuntuar(
+        WorkMode aiMode, string location)
+    {
+        // Regresión (review: ai-unacceptable-workmode-tops-report):
+        // CommuteFilter solo veía el modo que estimó el provider. Si la IA
+        // revelaba después un modo que el perfil rechaza, la oferta perdía
+        // solo 30/25 puntos y, con buen salario, stack y cliente final,
+        // encabezaba el top (99 pts, banda "high") y disparaba el email.
+        OllamaCaido();
+        UsarAlmacenSimulado();
+        _profile = PerfilMadrid(acceptOnSite: false);
+        var falsaRemota = Offer("Senior Backend Engineer (.NET)", "Greenhouse",
+            description: "Descripción completa con requisitos", location: location, workMode: WorkMode.Remote);
+        falsaRemota.SalaryMax = 75000;
+        var remota = Offer("Desarrollador .NET", "Adzuna", "Globex", location: "España", workMode: WorkMode.Remote);
+        _ai.Setup(a => a.AnalyzeAsync(falsaRemota, It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AiAnalysisResult("resumen", "Senior", ["C#", ".NET"], 95, [], [], "aplicar", [],
+                IsClientFinal: true, WorkMode: aiMode));
+
+        var report = await RunAsync(Provider(filtersByKeyword: true, falsaRemota, remota).Object);
+
+        // Analizada (la llamada a la IA ya se gastó y no debe repetirse) y
+        // guardada con el modo corregido, pero sin puntuación...
+        falsaRemota.IsAnalyzed.Should().BeTrue();
+        falsaRemota.Score.Should().BeNull();
+        falsaRemota.WorkMode.Should().Be(aiMode);
+        _repository.Verify(r => r.UpdateAsync(falsaRemota, It.IsAny<CancellationToken>()), Times.Once);
+        report.TotalAnalyzed.Should().Be(2);
+
+        // ...así que nunca entra en el top (ni dispara el email por sí sola).
+        report.TopOffers.Should().Equal(remota);
+
+        // Y la siguiente ejecución no la reintenta.
+        await RunAsync(Provider(filtersByKeyword: true).Object);
+        _ai.Verify(a => a.AnalyzeAsync(falsaRemota, It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Handle_IaRevelaUnModoAceptableYConmutable_SePuntuaNormal()
+    {
+        // Contrapunto del descarte: si el modo corregido por la IA sigue
+        // siendo aceptable para el perfil, la oferta se puntúa como siempre.
+        OllamaCaido();
+        _profile = PerfilMadrid(acceptOnSite: false);
+        var hibridaEnMadrid = Offer("Backend Engineer", "Greenhouse", location: "Madrid", workMode: WorkMode.Remote);
+        _ai.Setup(a => a.AnalyzeAsync(hibridaEnMadrid, It.IsAny<UserProfile>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AiAnalysisResult("resumen", "Senior", ["C#"], 80, [], [], "aplicar", [],
+                WorkMode: WorkMode.Hybrid));
+
+        var report = await RunAsync(Provider(filtersByKeyword: true, hibridaEnMadrid).Object);
+
+        hibridaEnMadrid.IsAnalyzed.Should().BeTrue();
+        hibridaEnMadrid.WorkMode.Should().Be(WorkMode.Hybrid);
+        hibridaEnMadrid.Score.Should().NotBeNull();
+        hibridaEnMadrid.Score!.RemoteScore.Should().Be(15);
         report.TotalAnalyzed.Should().Be(1);
     }
 }

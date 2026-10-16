@@ -101,8 +101,8 @@ public sealed class JSearchProvider(
         {
             ExternalId = r.JobId ?? Guid.NewGuid().ToString(),
             SourceProvider = ProviderName,
-            Title = r.JobTitle ?? "(sin título)",
-            CompanyName = r.EmployerName ?? "(empresa desconocida)",
+            Title = r.JobTitle ?? JobOffer.UntitledTitle,
+            CompanyName = r.EmployerName ?? JobOffer.UnknownCompany,
             Url = r.JobApplyLink ?? string.Empty,
             Description = r.JobDescription,
             SalaryMin = (decimal?)r.JobMinSalary,

@@ -82,7 +82,7 @@ public sealed class LeverProvider(
         {
             ExternalId = p.Id ?? Guid.NewGuid().ToString(),
             SourceProvider = ProviderName,
-            Title = p.Text ?? "(sin título)",
+            Title = p.Text ?? JobOffer.UntitledTitle,
             CompanyName = token,
             Url = p.HostedUrl ?? string.Empty,
             Description = description,
