@@ -110,7 +110,7 @@ public sealed class JSearchProvider(
             Location = location,
             WorkMode = r.JobIsRemote == true
                 ? WorkMode.Remote
-                : WorkModeHeuristics.FromText(r.JobTitle, r.JobDescription, location),
+                : WorkModeHeuristics.FromText(title: r.JobTitle, location: location, description: r.JobDescription),
             PublishedAt = r.JobPostedAt ?? DateTime.UtcNow,
         };
     }

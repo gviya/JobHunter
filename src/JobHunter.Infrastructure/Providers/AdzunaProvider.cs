@@ -109,7 +109,7 @@ public sealed class AdzunaProvider(
             SalaryMin = r.SalaryMin,
             SalaryMax = r.SalaryMax,
             Location = location,
-            WorkMode = WorkModeHeuristics.FromText(r.Title, r.Description, location),
+            WorkMode = WorkModeHeuristics.FromText(title: r.Title, location: location, description: r.Description),
             PublishedAt = r.Created ?? DateTime.UtcNow,
         };
     }

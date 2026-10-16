@@ -74,7 +74,7 @@ public sealed class GreenhouseProvider(
             Url = job.AbsoluteUrl ?? string.Empty,
             Description = job.Content,
             Location = location,
-            WorkMode = WorkModeHeuristics.FromText(job.Title, job.Content, location),
+            WorkMode = WorkModeHeuristics.FromText(title: job.Title, location: location, description: job.Content),
             IsClientFinal = true,
             PublishedAt = job.UpdatedAt ?? DateTime.UtcNow,
         };

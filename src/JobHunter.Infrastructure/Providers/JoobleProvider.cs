@@ -96,7 +96,7 @@ public sealed partial class JoobleProvider(
             Url = r.Link ?? string.Empty,
             Description = description,
             Location = r.Location,
-            WorkMode = WorkModeHeuristics.FromText(r.Type, r.Title, description, r.Location),
+            WorkMode = WorkModeHeuristics.FromText(title: r.Title, location: r.Location, description: description, extra: r.Type),
             PublishedAt = r.Updated ?? DateTime.UtcNow,
         };
     }
