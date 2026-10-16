@@ -18,4 +18,14 @@ public sealed class DailyReport
     public List<JobOffer> TopOffers { get; set; } = [];
 
     public string HtmlContent { get; set; } = string.Empty;
+
+    /// <summary>
+    /// True si la oferta se puntuó en ESTA ejecución (nueva o reintentada) y
+    /// no en una anterior. El top abarca varios días, así que esto distingue
+    /// la novedad de lo que ya salió en informes previos.
+    /// </summary>
+    public bool IsNewInThisRun(JobOffer offer) => offer.Score?.ScoredAt >= GeneratedAt;
+
+    /// <summary>¿Hay alguna oferta del top puntuada en esta ejecución?</summary>
+    public bool HasNewTopOffers() => TopOffers.Any(IsNewInThisRun);
 }

@@ -20,9 +20,10 @@ internal sealed class JobRepository(JobHunterDbContext db) : IJobRepository
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<IReadOnlyList<JobOffer>> GetUnanalyzedAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<JobOffer>> GetUnanalyzedAsync(DateTime discoveredSince, CancellationToken ct = default)
         => await db.JobOffers
-            .Where(o => !o.IsAnalyzed && !o.IsDuplicate)
+            .Where(o => !o.IsAnalyzed && !o.IsDuplicate && o.DiscoveredAt >= discoveredSince)
+            .OrderBy(o => o.DiscoveredAt)
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<JobOffer>> GetRecentByCompanyAsync(
@@ -51,10 +52,11 @@ internal sealed class JobRepository(JobHunterDbContext db) : IJobRepository
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<IReadOnlyList<JobOffer>> GetTopScoredAsync(int count = 15, CancellationToken ct = default)
+    public async Task<IReadOnlyList<JobOffer>> GetTopScoredAsync(
+        DateTime discoveredSince, int count = 15, CancellationToken ct = default)
         => await db.JobOffers
             .Include(o => o.Score)
-            .Where(o => o.Score != null && !o.IsDuplicate)
+            .Where(o => o.Score != null && !o.IsDuplicate && o.DiscoveredAt >= discoveredSince)
             .OrderByDescending(o => o.Score!.TotalScore)
             .Take(count)
             .ToListAsync(ct);

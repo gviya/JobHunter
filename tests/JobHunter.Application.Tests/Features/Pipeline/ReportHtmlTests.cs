@@ -35,7 +35,7 @@ public sealed class ReportHtmlTests
             TopOffers = [OfferWithScore("Backend .NET", "C#, .NET, SQL Server")],
         };
 
-        var html = RunDailyPipeline.Handler.BuildHtml(report);
+        var html = RunDailyPipeline.Handler.BuildHtml(report, windowDays: 7);
 
         // La barra de filtrado y el script deben estar presentes y las
         // tarjetas deben exponer las techs para los chips.
@@ -59,7 +59,7 @@ public sealed class ReportHtmlTests
             TopOffers = [OfferWithScore("Backend .NET", "C#", maliciousUrl)],
         };
 
-        var html = RunDailyPipeline.Handler.BuildHtml(report);
+        var html = RunDailyPipeline.Handler.BuildHtml(report, windowDays: 7);
 
         // Solo se admiten http/https absolutas: cualquier otro esquema (que
         // podría ejecutar código al pinchar el enlace) se degrada a "#".
@@ -76,7 +76,7 @@ public sealed class ReportHtmlTests
             TopOffers = [OfferWithScore("Backend .NET", "C#", "https://example.com/oferta-42")],
         };
 
-        var html = RunDailyPipeline.Handler.BuildHtml(report);
+        var html = RunDailyPipeline.Handler.BuildHtml(report, windowDays: 7);
 
         html.Should().Contain("href=\"https://example.com/oferta-42\"");
     }
@@ -84,9 +84,29 @@ public sealed class ReportHtmlTests
     [Fact]
     public void BuildHtml_SinOfertas_NoIncluyeLaBarraDeFiltro()
     {
-        var html = RunDailyPipeline.Handler.BuildHtml(new DailyReport());
+        var html = RunDailyPipeline.Handler.BuildHtml(new DailyReport(), windowDays: 7);
 
-        html.Should().Contain("No hay ofertas puntuadas todavía");
+        html.Should().Contain("No hay ofertas puntuadas en los últimos 7 días");
         html.Should().NotContain("id=\"filter-exclude\"");
+    }
+
+    [Fact]
+    public void BuildHtml_MarcaComoNuevaSoloLoPuntuadoEnEstaEjecucion()
+    {
+        var report = new DailyReport { GeneratedAt = new DateTime(2026, 10, 16, 8, 0, 0, DateTimeKind.Utc) };
+
+        var nueva = OfferWithScore("Oferta de hoy", "C#");
+        nueva.Score!.ScoredAt = report.GeneratedAt.AddMinutes(3);
+
+        var vieja = OfferWithScore("Oferta de ayer", "C#");
+        vieja.Score!.ScoredAt = report.GeneratedAt.AddDays(-1);
+
+        report.TopOffers = [nueva, vieja];
+
+        var html = RunDailyPipeline.Handler.BuildHtml(report, windowDays: 7);
+
+        // Una sola etiqueta "Nueva" (la de hoy) y el resumen de la cabecera.
+        html.Split("class=\"tag new\"").Length.Should().Be(2);
+        html.Should().Contain("top 2 ofertas de los últimos 7 días · 1 nuevas");
     }
 }

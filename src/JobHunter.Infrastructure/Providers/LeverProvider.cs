@@ -22,6 +22,9 @@ public sealed class LeverProvider(
 
     public string ProviderName => "Lever";
 
+    // Igual que Greenhouse: devuelve el board completo, sin filtro por keyword.
+    public bool FiltersByKeyword => false;
+
     public async Task<IReadOnlyList<JobOffer>> SearchAsync(SearchFilter filter, CancellationToken ct = default)
     {
         var tokens = _options.Lever;

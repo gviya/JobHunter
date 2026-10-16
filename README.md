@@ -23,7 +23,10 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
 
 1. **Busca** en paralelo en todas las fuentes activas (Adzuna, Greenhouse,
    Lever, JSearch, Jooble — InfoJobs pendiente de OAuth2) con las keywords
-   del perfil.
+   del perfil. Greenhouse y Lever devuelven el board completo de la empresa,
+   así que sus ofertas pasan antes un filtro por título (rol técnico, techs
+   del perfil o términos de las keywords) para no analizar puestos de
+   ventas, marketing, etc.
 2. **Filtra por ubicación** en dos pasos: primero país (España o remoto sin
    especificar), después desplazamiento — el remoto pasa siempre (prioridad
    máxima); híbrido/presencial solo si su localización es compatible con la
@@ -34,13 +37,18 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
    misma empresa.
 4. **Analiza** cada oferta nueva con IA (Claude Haiku u Ollama local) contra
    el perfil del candidato (resumen, seniority, techs, pros/contras,
-   recomendación).
+   recomendación). Las que fallaron en ejecuciones anteriores (IA caída,
+   créditos agotados...) se reintentan mientras estén dentro de la ventana
+   del informe (`ReportWindowDays`, 7 días por defecto).
 5. **Puntúa** (modo de trabajo/zona, cliente final vs. consultora, salario,
    stack con pesos 0-10, techs excluidas, calidad de la información) y genera
-   el **informe HTML** con el top 15, con un filtro interactivo en el
-   navegador para excluir/exigir términos (p. ej. "sin inglés", "solo
-   remoto") y chips por tecnología.
-6. **Envía** el informe por email (MailKit/SMTP) si hay ofertas en el top.
+   el **informe HTML** con el top 15 de los últimos `ReportWindowDays` días
+   (lo puntuado en esta ejecución va marcado como "Nueva"), con un filtro
+   interactivo en el navegador para excluir/exigir términos (p. ej. "sin
+   inglés", "solo remoto") y chips por tecnología.
+6. **Envía** el informe por email (MailKit/SMTP) solo si el top trae alguna
+   oferta nueva. El job no se reintenta automáticamente ni se ejecuta dos
+   veces a la vez (cron + `/jobs/run-now`): cada ejecución gasta cuota.
 
 ## Estructura del repositorio
 

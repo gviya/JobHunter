@@ -130,8 +130,9 @@ internal static class JobScoreCalculator
     /// límite solo se exige en los extremos del término que son letras: así
     /// ".NET" (empieza por '.') sí coincide dentro de "ASP.NET", y "C#"
     /// (termina en '#') coincide vaya seguido de lo que vaya.
+    /// Lo reutiliza <see cref="RelevanceFilter"/> para casar techs en títulos.
     /// </summary>
-    private static bool MentionsTech(string haystack, string tech)
+    internal static bool MentionsTech(string haystack, string tech)
     {
         var checkBefore = char.IsLetter(tech[0]);
         var checkAfter = char.IsLetter(tech[^1]);

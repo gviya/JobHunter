@@ -26,6 +26,8 @@ public sealed partial class JoobleProvider(
 
     public string ProviderName => "Jooble";
 
+    public bool FiltersByKeyword => true;
+
     public async Task<IReadOnlyList<JobOffer>> SearchAsync(SearchFilter filter, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(_options.ApiKey))

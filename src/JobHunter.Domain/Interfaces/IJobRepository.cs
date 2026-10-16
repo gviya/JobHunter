@@ -14,8 +14,13 @@ public interface IJobRepository
     /// <summary>Persiste una oferta nueva.</summary>
     Task SaveAsync(JobOffer offer, CancellationToken ct = default);
 
-    /// <summary>Ofertas descubiertas pero aún sin analizar y no duplicadas.</summary>
-    Task<IReadOnlyList<JobOffer>> GetUnanalyzedAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Ofertas sin analizar y no duplicadas descubiertas desde
+    /// <paramref name="discoveredSince"/>: las nuevas de esta ejecución más
+    /// las que fallaron al analizarse en ejecuciones anteriores (IA caída,
+    /// créditos agotados...), que así se reintentan en vez de perderse.
+    /// </summary>
+    Task<IReadOnlyList<JobOffer>> GetUnanalyzedAsync(DateTime discoveredSince, CancellationToken ct = default);
 
     /// <summary>Ofertas recientes de una misma empresa (para el dedup semántico).</summary>
     Task<IReadOnlyList<JobOffer>> GetRecentByCompanyAsync(
@@ -24,8 +29,13 @@ public interface IJobRepository
     /// <summary>Actualiza una oferta ya existente (score, flags, embedding...).</summary>
     Task UpdateAsync(JobOffer offer, CancellationToken ct = default);
 
-    /// <summary>Top ofertas por TotalScore (para el informe).</summary>
-    Task<IReadOnlyList<JobOffer>> GetTopScoredAsync(int count = 15, CancellationToken ct = default);
+    /// <summary>
+    /// Top ofertas por TotalScore descubiertas desde <paramref name="discoveredSince"/>
+    /// (para el informe). Sin esa ventana el informe "diario" sería el top
+    /// histórico: las mismas ofertas cada día, aunque ya hayan caducado.
+    /// </summary>
+    Task<IReadOnlyList<JobOffer>> GetTopScoredAsync(
+        DateTime discoveredSince, int count = 15, CancellationToken ct = default);
 
     /// <summary>Guarda el informe diario.</summary>
     Task SaveReportAsync(DailyReport report, CancellationToken ct = default);

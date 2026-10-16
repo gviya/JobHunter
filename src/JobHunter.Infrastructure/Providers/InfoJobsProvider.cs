@@ -21,6 +21,9 @@ public sealed class InfoJobsProvider(
 
     public string ProviderName => "InfoJobs";
 
+    // La búsqueda de InfoJobs acepta texto libre (parámetro "q").
+    public bool FiltersByKeyword => true;
+
     public Task<IReadOnlyList<JobOffer>> SearchAsync(SearchFilter filter, CancellationToken ct = default)
     {
         // TODO: implementar OAuth2 client credentials contra

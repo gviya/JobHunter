@@ -23,6 +23,8 @@ public sealed class AdzunaProvider(
 
     public string ProviderName => "Adzuna";
 
+    public bool FiltersByKeyword => true;
+
     public async Task<IReadOnlyList<JobOffer>> SearchAsync(SearchFilter filter, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(_options.AppId) || string.IsNullOrWhiteSpace(_options.AppKey))

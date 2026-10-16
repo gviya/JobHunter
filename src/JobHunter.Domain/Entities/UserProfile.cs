@@ -94,6 +94,14 @@ public sealed class UserProfile
     public int MaxResultsPerProvider { get; init; } = 50;
 
     /// <summary>
+    /// Ventana en días del informe: el top solo incluye ofertas descubiertas
+    /// en los últimos N días (las de esta ejecución van marcadas como
+    /// "Nueva"), y las que fallaron al analizarse se reintentan durante ese
+    /// mismo plazo — pasado, se dan por caducadas.
+    /// </summary>
+    public int ReportWindowDays { get; init; } = 7;
+
+    /// <summary>
     /// Perfil de ejemplo (backend .NET genérico) usado cuando no hay sección
     /// "UserProfile" en la configuración. Sirve también como referencia de
     /// cómo rellenar appsettings.Local.json — ver appsettings.Local.template.json.
