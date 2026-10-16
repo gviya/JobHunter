@@ -101,8 +101,8 @@ public sealed class JSearchProvider(
         {
             ExternalId = r.JobId ?? Guid.NewGuid().ToString(),
             SourceProvider = ProviderName,
-            Title = r.JobTitle ?? "(sin título)",
-            CompanyName = r.EmployerName ?? "(empresa desconocida)",
+            Title = r.JobTitle ?? JobOffer.UntitledTitle,
+            CompanyName = r.EmployerName ?? JobOffer.UnknownCompany,
             Url = r.JobApplyLink ?? string.Empty,
             Description = r.JobDescription,
             SalaryMin = (decimal?)r.JobMinSalary,
@@ -110,7 +110,7 @@ public sealed class JSearchProvider(
             Location = location,
             WorkMode = r.JobIsRemote == true
                 ? WorkMode.Remote
-                : WorkModeHeuristics.FromText(r.JobTitle, r.JobDescription, location),
+                : WorkModeHeuristics.FromText(title: r.JobTitle, location: location, description: r.JobDescription),
             PublishedAt = r.JobPostedAt ?? DateTime.UtcNow,
         };
     }

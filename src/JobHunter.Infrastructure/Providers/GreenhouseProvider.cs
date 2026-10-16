@@ -11,7 +11,10 @@ namespace JobHunter.Infrastructure.Providers;
 /// <summary>
 /// Provider de Greenhouse: lee el board público de cada empresa objetivo
 /// (sin autenticación). Como es el ATS propio de la empresa, las ofertas
-/// se consideran de cliente final.
+/// se marcan de cliente final POR DEFECTO; la IA lo corrige al analizar,
+/// porque algunas "empresas objetivo" son consultoras o dev shops.
+/// El "content" (pedido con content=true) es HTML ESCAPADO: se convierte a
+/// texto plano para que ni la puntuación ni el prompt reciban maquetación.
 /// </summary>
 public sealed class GreenhouseProvider(
     IHttpClientFactory httpClientFactory,
@@ -64,17 +67,18 @@ public sealed class GreenhouseProvider(
     private JobOffer Map(string token, GreenhouseJob job)
     {
         var location = job.Location?.Name;
+        var description = HtmlText.ToPlainText(job.Content);
 
         return new JobOffer
         {
             ExternalId = job.Id?.ToString() ?? Guid.NewGuid().ToString(),
             SourceProvider = ProviderName,
-            Title = job.Title ?? "(sin título)",
+            Title = job.Title ?? JobOffer.UntitledTitle,
             CompanyName = token,
             Url = job.AbsoluteUrl ?? string.Empty,
-            Description = job.Content,
+            Description = description,
             Location = location,
-            WorkMode = WorkModeHeuristics.FromText(job.Title, job.Content, location),
+            WorkMode = WorkModeHeuristics.FromText(title: job.Title, location: location, description: description),
             IsClientFinal = true,
             PublishedAt = job.UpdatedAt ?? DateTime.UtcNow,
         };

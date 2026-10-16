@@ -63,6 +63,9 @@ namespace JobHunter.Infrastructure.Persistence.Migrations
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("DescriptionIsSnippet")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("DiscoveredAt")
                         .HasColumnType("TEXT");
 
@@ -76,7 +79,7 @@ namespace JobHunter.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsAnalyzed")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsClientFinal")
+                    b.Property<bool?>("IsClientFinal")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsDuplicate")

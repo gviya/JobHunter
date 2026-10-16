@@ -8,12 +8,23 @@ namespace JobHunter.Application.Features.Pipeline;
 /// y el perfil del candidato. Se extrae del handler para poder testearlo
 /// de forma aislada.
 ///
+/// La oferta llega ya corregida con las señales de la IA (ver
+/// <see cref="AiSignals"/>): modo de trabajo y cliente final son los que
+/// dice la oferta, no los que supone la fuente.
+///
 /// Pesos:
 ///  - Ubicación: Remote +30 (prioridad máxima); Híbrido conmutable +15 (+5
 ///    si la zona es de las preferidas del perfil), no conmutable -25;
-///    OnSite conmutable -10, no conmutable -30. (Los no conmutables no
-///    deberían llegar aquí: CommuteFilter los descarta antes.)
-///  - Cliente final +20 / consultora -10.
+///    OnSite conmutable -10, no conmutable -30. Un modo que el perfil no
+///    acepta (AcceptHybrid/AcceptOnSite = false) puntúa como el no
+///    conmutable. CommuteFilter descarta ambos casos antes de analizar, y si
+///    la IA revela DESPUÉS que una oferta "remota" es híbrida o presencial
+///    en un modo o sitio que el perfil no acepta, el pipeline la descarta
+///    tras el análisis sin llegar a puntuarla (una penalización fija no
+///    garantiza hundirla: el resto de términos puede compensarla). Aquí se
+///    mantiene la penalización como valor por defecto defensivo para quien
+///    puntúe sin pasar por ese filtro.
+///  - Cliente final +20 / consultora -10 / no se sabe 0.
 ///  - Salario (SalaryMax): ≥70k +25, ≥60k +20, ≥50k +15, ≥40k +5, &lt;40k -10, null -5.
 ///  - Techs conocidas: cada tech del perfil (TechWeights, escala 0-10) que
 ///    aparezca en la oferta suma su peso; el total se capa en +40.
@@ -21,7 +32,9 @@ namespace JobHunter.Application.Features.Pipeline;
 ///    (mín -36). El candidato es backend puro y apenas sabe frontend, así que
 ///    una oferta con varias señales de front se hunde de verdad.
 ///  - Calidad de la información: descripción muy corta o ausente resta hasta
-///    -25; una oferta bien detallada suma +8.
+///    -25; una oferta bien detallada suma +8. Si la fuente solo da un
+///    extracto (<see cref="JobOffer.DescriptionIsSnippet"/>) cuenta 0: su
+///    longitud no dice nada de la oferta real.
 ///  - TotalScore = Compatibility/2 + suma de lo anterior.
 /// </summary>
 internal static class JobScoreCalculator
@@ -32,10 +45,15 @@ internal static class JobScoreCalculator
     public static JobScore Calculate(JobOffer offer, AiAnalysisResult analysis, UserProfile profile)
     {
         var remote = LocationScore(offer, profile);
-        var clientFinal = offer.IsClientFinal ? 20 : -10;
+        var clientFinal = offer.IsClientFinal switch
+        {
+            true => 20,
+            false => -10,
+            null => 0, // ni la fuente ni la IA lo saben: neutro
+        };
         var salary = SalaryScore(offer.SalaryMax);
         var tech = TechScore(offer, analysis, profile);
-        var infoQuality = InfoQualityScore(offer.Description);
+        var infoQuality = InfoQualityScore(offer);
         var total = (analysis.Compatibility / 2) + remote + clientFinal + salary + tech + infoQuality;
 
         return new JobScore
@@ -59,10 +77,10 @@ internal static class JobScoreCalculator
     private static int LocationScore(JobOffer offer, UserProfile profile) => offer.WorkMode switch
     {
         WorkMode.Remote => 30,
-        WorkMode.Hybrid => CommuteFilter.IsCommutable(offer.Location, profile)
+        WorkMode.Hybrid => profile.AcceptHybrid && CommuteFilter.IsCommutable(offer.Location, profile)
             ? 15 + (CommuteFilter.InPreferredZone(offer.Location, profile) ? 5 : 0)
             : -25,
-        WorkMode.OnSite => CommuteFilter.IsCommutable(offer.Location, profile) ? -10 : -30,
+        WorkMode.OnSite => profile.AcceptOnSite && CommuteFilter.IsCommutable(offer.Location, profile) ? -10 : -30,
         _ => 0,
     };
 
@@ -107,11 +125,21 @@ internal static class JobScoreCalculator
     /// <summary>
     /// Calidad de la información de la oferta según la longitud de la
     /// descripción: sin descripción o muy corta = mal explicada (resta
-    /// fuerte); bien detallada = suma. Los umbrales son en caracteres.
+    /// fuerte); bien detallada = suma. Los umbrales son en caracteres de
+    /// texto limpio: los providers ya entregan texto plano (sin HTML) y aquí
+    /// las rachas de espacios/saltos cuentan como uno, así que la longitud
+    /// mide contenido y no maquetación.
+    /// Un extracto de la fuente es neutro (0): no se puede juzgar, y
+    /// penalizarlo castigaría al agregador en vez de a la oferta.
     /// </summary>
-    private static int InfoQualityScore(string? description)
+    private static int InfoQualityScore(JobOffer offer)
     {
-        var length = description?.Trim().Length ?? 0;
+        if (offer.DescriptionIsSnippet)
+        {
+            return 0;
+        }
+
+        var length = CleanLength(offer.Description);
 
         return length switch
         {
@@ -120,6 +148,31 @@ internal static class JobScoreCalculator
             < 1200 => 0,
             _ => 8,
         };
+    }
+
+    /// <summary>Longitud del texto recortado, contando cada racha de espacios en blanco como uno.</summary>
+    private static int CleanLength(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return 0;
+        }
+
+        var length = 0;
+        var previousWasWhitespace = false;
+
+        foreach (var c in text.AsSpan().Trim())
+        {
+            var isWhitespace = char.IsWhiteSpace(c);
+            if (!isWhitespace || !previousWasWhitespace)
+            {
+                length++;
+            }
+
+            previousWasWhitespace = isWhitespace;
+        }
+
+        return length;
     }
 
     /// <summary>

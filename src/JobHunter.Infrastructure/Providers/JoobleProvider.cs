@@ -1,8 +1,6 @@
-using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using JobHunter.Domain.Entities;
 using JobHunter.Domain.Interfaces;
 using JobHunter.Infrastructure.Configuration;
@@ -17,7 +15,7 @@ namespace JobHunter.Infrastructure.Providers;
 /// español. La API key viaja EN LA URL (POST /api/{key}), así que ningún
 /// log de este provider debe incluir la URL completa.
 /// </summary>
-public sealed partial class JoobleProvider(
+public sealed class JoobleProvider(
     IHttpClientFactory httpClientFactory,
     IOptions<JoobleOptions> options,
     ILogger<JoobleProvider> logger) : IJobProvider
@@ -84,41 +82,23 @@ public sealed partial class JoobleProvider(
 
     private JobOffer Map(JoobleJob r, string id)
     {
-        var description = CleanHtml(r.Snippet);
+        var description = HtmlText.ToPlainText(r.Snippet);
 
         // TODO: parsear salary string de Jooble ("30.000 € - 40.000 €") a SalaryMin/SalaryMax.
         return new JobOffer
         {
             ExternalId = id,
             SourceProvider = ProviderName,
-            Title = r.Title ?? "(sin título)",
-            CompanyName = string.IsNullOrWhiteSpace(r.Company) ? "(empresa desconocida)" : r.Company,
+            Title = r.Title ?? JobOffer.UntitledTitle,
+            CompanyName = string.IsNullOrWhiteSpace(r.Company) ? JobOffer.UnknownCompany : r.Company,
             Url = r.Link ?? string.Empty,
             Description = description,
+            DescriptionIsSnippet = true,
             Location = r.Location,
-            WorkMode = WorkModeHeuristics.FromText(r.Type, r.Title, description, r.Location),
+            WorkMode = WorkModeHeuristics.FromText(title: r.Title, location: r.Location, description: description, extra: r.Type),
             PublishedAt = r.Updated ?? DateTime.UtcNow,
         };
     }
-
-    /// <summary>Quita etiquetas HTML del snippet y decodifica entidades (&amp;amp;, &amp;nbsp;...).</summary>
-    private static string? CleanHtml(string? html)
-    {
-        if (string.IsNullOrWhiteSpace(html))
-        {
-            return html;
-        }
-
-        var text = HtmlTagRegex().Replace(html, " ");
-        text = WebUtility.HtmlDecode(text);
-        return WhitespaceRegex().Replace(text, " ").Trim();
-    }
-
-    [GeneratedRegex("<[^>]+>")]
-    private static partial Regex HtmlTagRegex();
-
-    [GeneratedRegex(@"\s+")]
-    private static partial Regex WhitespaceRegex();
 
     // ── DTOs de la petición/respuesta de Jooble ─────────────────────────
     private sealed record JoobleRequest(
