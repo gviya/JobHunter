@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using JobHunter.Domain.Entities;
 using JobHunter.Domain.Interfaces;
@@ -7,10 +8,11 @@ using JobHunter.Domain.Interfaces;
 namespace JobHunter.Infrastructure.Services;
 
 /// <summary>
-/// Construye el prompt de análisis y parsea la respuesta JSON del modelo.
-/// Lo comparten todas las implementaciones de <see cref="IAiAnalysisService"/>
-/// (Claude, Ollama...) para que el criterio de evaluación sea idéntico sin
-/// importar qué LLM responda.
+/// Construye el prompt de análisis, define el JSON Schema de la respuesta y
+/// parsea la respuesta JSON del modelo. Lo comparten todas las
+/// implementaciones de <see cref="IAiAnalysisService"/> (Claude, Ollama...)
+/// para que el criterio de evaluación y el contrato de salida sean idénticos
+/// sin importar qué LLM responda.
 /// </summary>
 internal static class JobAnalysisPrompt
 {
@@ -18,6 +20,30 @@ internal static class JobAnalysisPrompt
     {
         PropertyNameCaseInsensitive = true,
     };
+
+    // Valores cerrados que el prompt enseña y el schema impone: una sola
+    // fuente para que el ejemplo del prompt y la decodificación restringida
+    // no puedan divergir.
+    private static readonly string[] SeniorityLevels = ["Junior", "Mid", "Senior", "Lead"];
+    private static readonly string[] WorkModeValues = ["Remote", "Hybrid", "OnSite", "Unknown"];
+
+    /// <summary>
+    /// JSON Schema de la respuesta, con los mismos campos que lee
+    /// <see cref="TryParse"/>. Claude lo recibe como
+    /// <c>output_config.format</c> (structured outputs) y Ollama como
+    /// <c>format</c> de /api/generate: ambos restringen la decodificación a
+    /// este contrato, así que el JSON llega siempre completo y bien tipado.
+    /// Es un <see cref="JsonElement"/> (inmutable) para poder compartirlo
+    /// entre peticiones concurrentes sin copiarlo.
+    /// <para>
+    /// Solo usa lo que structured outputs admite: cada objeto lleva
+    /// <c>additionalProperties: false</c> y todas sus propiedades en
+    /// <c>required</c>; sin minimum/maximum ni minLength/maxLength (por eso
+    /// el rango 0-100 de compatibility lo sigue imponiendo el Math.Clamp de
+    /// <see cref="TryParse"/>).
+    /// </para>
+    /// </summary>
+    public static JsonElement ResponseSchema { get; } = BuildResponseSchema();
 
     public static string Build(JobOffer offer, UserProfile profile)
     {
@@ -73,10 +99,10 @@ internal static class JobAnalysisPrompt
         sb.AppendLine();
         sb.AppendLine("Analiza la oferta contra el perfil y responde ÚNICAMENTE con un objeto JSON válido");
         sb.AppendLine("(sin texto adicional, sin fences) con EXACTAMENTE esta forma:");
-        sb.AppendLine("""
+        sb.AppendLine($$"""
             {
               "summary": "resumen de 3-4 frases que incluya QUÉ PIDE la oferta: stack/tecnologías, años de experiencia, responsabilidades principales y tipo de empresa",
-              "seniority": "Junior|Mid|Senior|Lead",
+              "seniority": "{{string.Join('|', SeniorityLevels)}}",
               "importantTechs": ["tech1", "tech2"],
               "requirements": ["requisito concreto 1", "requisito concreto 2", "requisito concreto 3"],
               "compatibility": 0,
@@ -84,7 +110,7 @@ internal static class JobAnalysisPrompt
               "cons": ["con1", "con2"],
               "recommendation": "recomendación breve",
               "clientFinal": null,
-              "workMode": "Remote|Hybrid|OnSite|Unknown"
+              "workMode": "{{string.Join('|', WorkModeValues)}}"
             }
             """);
         sb.AppendLine("Donde:");
@@ -105,6 +131,50 @@ internal static class JobAnalysisPrompt
     }
 
     /// <summary>
+    /// Construye <see cref="ResponseSchema"/>. El orden de las propiedades es
+    /// el del ejemplo del prompt (el modelo las genera en ese orden) y
+    /// "required" se deriva de ellas para que ningún campo quede fuera.
+    /// </summary>
+    private static JsonElement BuildResponseSchema()
+    {
+        static JsonObject Typed(string type) => new() { ["type"] = type };
+
+        static JsonObject StringArray() => new() { ["type"] = "array", ["items"] = Typed("string") };
+
+        static JsonObject StringEnum(string[] values) => new()
+        {
+            ["type"] = "string",
+            ["enum"] = new JsonArray([.. values.Select(v => JsonValue.Create(v))]),
+        };
+
+        var properties = new JsonObject
+        {
+            ["summary"] = Typed("string"),
+            ["seniority"] = StringEnum(SeniorityLevels),
+            ["importantTechs"] = StringArray(),
+            ["requirements"] = StringArray(),
+            // Entero sin minimum/maximum (no admitidos): el rango lo acota TryParse.
+            ["compatibility"] = Typed("integer"),
+            ["pros"] = StringArray(),
+            ["cons"] = StringArray(),
+            ["recommendation"] = Typed("string"),
+            // Requerido pero anulable: null sigue significando "no se sabe".
+            ["clientFinal"] = new JsonObject { ["anyOf"] = new JsonArray(Typed("boolean"), Typed("null")) },
+            ["workMode"] = StringEnum(WorkModeValues),
+        };
+
+        var schema = new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = properties,
+            ["required"] = new JsonArray([.. properties.Select(p => JsonValue.Create(p.Key))]),
+            ["additionalProperties"] = false,
+        };
+
+        return JsonSerializer.SerializeToElement(schema);
+    }
+
+    /// <summary>
     /// Añade una línea con las techs del perfil cuyo peso (escala 0-10) cae
     /// en el rango dado. Si el rango queda vacío no se escribe nada.
     /// </summary>
@@ -122,6 +192,12 @@ internal static class JobAnalysisPrompt
         }
     }
 
+    /// <summary>
+    /// Parsea la respuesta del modelo. Con structured outputs llega JSON
+    /// limpio, pero se mantiene tolerante (fences, texto alrededor, tipos
+    /// inesperados) porque protege a los modelos que ignoran el schema
+    /// (Ollama antiguo, modelos locales pequeños).
+    /// </summary>
     public static bool TryParse(string content, out AiAnalysisResult result)
     {
         result = null!;

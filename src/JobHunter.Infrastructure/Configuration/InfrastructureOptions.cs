@@ -16,7 +16,27 @@ public sealed class AnthropicOptions
     public const string SectionName = "Anthropic";
 
     public string ApiKey { get; set; } = "";
-    public string Model { get; set; } = "claude-haiku-4-5-20251001";
+
+    /// <summary>
+    /// Id del modelo. Haiku 5.5 cuesta $0.10/$0.50 por MTok (prompts de hasta
+    /// 100K tokens), una décima parte que Haiku 4.5 ($1/$5).
+    /// </summary>
+    public string Model { get; set; } = "claude-haiku-5-5";
+
+    /// <summary>
+    /// Esfuerzo (<c>output_config.effort</c>: low, medium, high, xhigh o max;
+    /// Haiku 5.5 usa medium si no se envía). "low" basta para esta extracción
+    /// corta y abarata el razonamiento. Vacío = no se envía: OBLIGATORIO con
+    /// claude-haiku-4-5, que rechaza el parámetro con un 400.
+    /// </summary>
+    public string Effort { get; set; } = "low";
+
+    /// <summary>
+    /// Límite de tokens de salida. Incluye el razonamiento que Haiku 5.5 hace
+    /// por defecto, así que va holgado: si se queda corto el JSON llega
+    /// truncado (stop_reason "max_tokens").
+    /// </summary>
+    public int MaxTokens { get; set; } = 4096;
 }
 
 /// <summary>
