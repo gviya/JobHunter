@@ -45,6 +45,39 @@ public sealed class JobScoreCalculatorTests
         };
     }
 
+    // Mismo perfil de Madrid con salarios y preferencia de cliente final a
+    // medida, para comprobar que la puntuación sigue al perfil.
+    private static UserProfile MadridProfileWith(
+        decimal? minAcceptableSalary = null,
+        decimal? targetSalary = null,
+        bool preferClientFinal = true)
+    {
+        var madrid = MadridProfile();
+        return new UserProfile
+        {
+            TechWeights = madrid.TechWeights,
+            ExcludedTechs = madrid.ExcludedTechs,
+            City = madrid.City,
+            PreferredZones = madrid.PreferredZones,
+            ExcludedAreas = madrid.ExcludedAreas,
+            MinAcceptableSalary = minAcceptableSalary ?? madrid.MinAcceptableSalary,
+            TargetSalary = targetSalary ?? madrid.TargetSalary,
+            PreferClientFinal = preferClientFinal,
+        };
+    }
+
+    private static JobOffer RemoteOffer(decimal? salaryMax = null, bool? isClientFinal = null) => new()
+    {
+        ExternalId = "salary",
+        SourceProvider = "Test",
+        Title = "Backend Developer",
+        CompanyName = "Acme",
+        Url = "https://example.com/salary",
+        WorkMode = WorkMode.Remote,
+        SalaryMax = salaryMax,
+        IsClientFinal = isClientFinal,
+    };
+
     private static AiAnalysisResult Analysis(int compatibility, string[]? importantTechs = null) =>
         new(
             Summary: "Resumen",
@@ -365,5 +398,112 @@ public sealed class JobScoreCalculatorTests
         var score = JobScoreCalculator.Calculate(offer, analysis, MadridProfile());
 
         score.AiRequirements.Should().Be("3 años con C# · Experiencia con Docker · Inglés B2");
+    }
+
+    [Theory]
+    [InlineData(70000, 25)]
+    [InlineData(69999, 20)]
+    [InlineData(60000, 20)]
+    [InlineData(59999, 15)]
+    [InlineData(50000, 15)]
+    [InlineData(49999, 5)]
+    [InlineData(40000, 5)]
+    [InlineData(39999, -10)]
+    [InlineData(null, -5)]
+    public void Calculate_SalarioConPerfilPorDefecto_ReproduceLosTramosFijosDeSiempre(int? salaryMax, int expected)
+    {
+        // Mínimo 40k y objetivo 55k: los tramos relativos deben dar
+        // exactamente lo mismo que los antiguos tramos fijos
+        // (≥70k, ≥60k, ≥50k, ≥40k).
+        JobScoreCalculator.Calculate(RemoteOffer(salaryMax), Analysis(70), MadridProfile())
+            .SalaryScore.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(53000, 25)]  // objetivo + 15k
+    [InlineData(52999, 20)]
+    [InlineData(43000, 20)]  // objetivo + 5k
+    [InlineData(42999, 15)]
+    [InlineData(33000, 15)]  // objetivo - 5k
+    [InlineData(32999, 5)]
+    [InlineData(30000, 5)]   // mínimo
+    [InlineData(29999, -10)]
+    [InlineData(null, -5)]
+    public void Calculate_SalarioConPerfilPropio_LosTramosSeMuevenConElPerfil(int? salaryMax, int expected)
+    {
+        var profile = MadridProfileWith(minAcceptableSalary: 30000, targetSalary: 38000);
+
+        JobScoreCalculator.Calculate(RemoteOffer(salaryMax), Analysis(70), profile)
+            .SalaryScore.Should().Be(expected);
+    }
+
+    [Fact]
+    public void Calculate_MismoSalarioConPerfilesDistintos_PuntuaDistinto()
+    {
+        // 45k es poco para el perfil por defecto (objetivo 55k) y bastante
+        // por encima del objetivo de un perfil que pide 38k.
+        var offer = RemoteOffer(45000m);
+
+        JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfile())
+            .SalaryScore.Should().Be(5);
+        JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfileWith(minAcceptableSalary: 30000, targetSalary: 38000))
+            .SalaryScore.Should().Be(20);
+    }
+
+    [Theory]
+    [InlineData(35000, -10)] // con el objetivo tal cual (40k) sería "cerca del objetivo"
+    [InlineData(45000, -10)] // mínimo - 5k: por debajo del mínimo
+    [InlineData(49999, -10)]
+    [InlineData(50000, 15)]  // el mínimo ya cuenta como "cerca del objetivo"
+    [InlineData(55000, 20)]  // mínimo + 5k
+    [InlineData(65000, 25)]  // mínimo + 15k
+    public void Calculate_ObjetivoPorDebajoDelMinimo_ElMinimoMandaComoObjetivo(int salaryMax, int expected)
+    {
+        // Perfil mal configurado (objetivo 40k < mínimo 50k): el mínimo es el
+        // límite duro, así que nada por debajo de él puede sumar.
+        var profile = MadridProfileWith(minAcceptableSalary: 50000, targetSalary: 40000);
+
+        JobScoreCalculator.Calculate(RemoteOffer(salaryMax), Analysis(70), profile)
+            .SalaryScore.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(38000, -10)] // objetivo - 5k caería aquí, pero está por debajo del mínimo
+    [InlineData(40000, 15)]
+    [InlineData(47000, 20)]
+    [InlineData(57000, 25)]
+    public void Calculate_ObjetivoPegadoAlMinimo_NoPremiaSalariosPorDebajoDelMinimo(int salaryMax, int expected)
+    {
+        var profile = MadridProfileWith(minAcceptableSalary: 40000, targetSalary: 42000);
+
+        JobScoreCalculator.Calculate(RemoteOffer(salaryMax), Analysis(70), profile)
+            .SalaryScore.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [InlineData(null)]
+    public void Calculate_SinPreferenciaPorClienteFinal_ClienteFinalPuntuaCero(bool? isClientFinal)
+    {
+        // Al candidato le da igual cliente final o consultora: el dato no
+        // debe premiar ni castigar, y tampoco contar en el total.
+        var offer = RemoteOffer(salaryMax: 55000m, isClientFinal: isClientFinal);
+
+        var indifferent = JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfileWith(preferClientFinal: false));
+        var preferring = JobScoreCalculator.Calculate(offer, Analysis(70), MadridProfileWith(preferClientFinal: true));
+
+        indifferent.ClientFinalScore.Should().Be(0);
+        indifferent.TotalScore.Should().Be(preferring.TotalScore - preferring.ClientFinalScore);
+    }
+
+    [Theory]
+    [InlineData(true, 20)]
+    [InlineData(false, -10)]
+    [InlineData(null, 0)]
+    public void Calculate_ConPreferenciaPorClienteFinal_MantieneLosPesos(bool? isClientFinal, int expected)
+    {
+        JobScoreCalculator.Calculate(RemoteOffer(isClientFinal: isClientFinal), Analysis(70), MadridProfileWith(preferClientFinal: true))
+            .ClientFinalScore.Should().Be(expected);
     }
 }

@@ -77,9 +77,48 @@ public sealed class JoobleProviderTests
         offer.DescriptionIsSnippet.Should().BeTrue(); // Jooble solo da un "snippet"
         offer.Location.Should().Be("Madrid");
         offer.WorkMode.Should().Be(WorkMode.Remote); // "Trabajo remoto" en type
-        // El salary string de Jooble no se parsea todavía (TODO en el provider).
-        offer.SalaryMin.Should().BeNull();
-        offer.SalaryMax.Should().BeNull();
+        // El salary de Jooble es texto libre: "35.000 € - 45.000 €".
+        offer.SalaryMin.Should().Be(35000m);
+        offer.SalaryMax.Should().Be(45000m);
+    }
+
+    [Theory]
+    [InlineData("Hasta 45.000 €", null, 45000)]
+    [InlineData("Desde 35.000€", 35000, null)]
+    [InlineData("40.000 € brutos/año", 40000, 40000)]
+    [InlineData("2.500 €/mes", null, null)]   // mensual: no se adivina el anual
+    [InlineData("15 €/hora", null, null)]
+    [InlineData("Salario competitivo", null, null)]
+    [InlineData("", null, null)]
+    public async Task SearchAsync_ConSalarioEnTexto_LoMapeaSoloSiEsAnualYClaro(string salary, int? expectedMin, int? expectedMax)
+    {
+        // Un salario mal leído distorsiona la puntuación: lo mensual, por
+        // horas o ilegible se queda sin salario en vez de adivinarse.
+        var json = $$"""
+            {
+              "totalCount": 1,
+              "jobs": [
+                {
+                  "id": 7,
+                  "title": "Backend Developer",
+                  "company": "Acme",
+                  "link": "https://jooble.example/7",
+                  "snippet": "Backend .NET.",
+                  "location": "Madrid",
+                  "salary": "{{salary}}",
+                  "updated": "2026-07-12T00:00:00Z",
+                  "type": ""
+                }
+              ]
+            }
+            """;
+        var provider = CreateProvider(json);
+
+        var result = await provider.SearchAsync(new SearchFilter(["backend"], "España", null, null));
+
+        result.Should().ContainSingle();
+        result[0].SalaryMin.Should().Be(expectedMin);
+        result[0].SalaryMax.Should().Be(expectedMax);
     }
 
     [Fact]

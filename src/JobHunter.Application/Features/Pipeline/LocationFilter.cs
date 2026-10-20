@@ -6,10 +6,13 @@ namespace JobHunter.Application.Features.Pipeline;
 /// <summary>
 /// Filtra ofertas por ubicación: España/Madrid o remoto sin especificar
 /// pasan; ubicaciones claramente ajenas (India, EEUU, LatAm...) se
-/// descartan aunque digan "remote". Greenhouse/Lever devuelven TODAS las
-/// ofertas de la empresa (Adzuna sí admite filtrar por "where=", los otros
-/// dos providers no), así que este filtro corre después de fusionar los
-/// resultados de todos los providers, no en cada uno por separado.
+/// descartan aunque digan "remote", y también los remotos acotados a una
+/// región que no incluye España ("Remote - LATAM", "Remote (Americas)",
+/// "APAC"). Las regiones que sí la incluyen ("EMEA", "Europe") pasan.
+/// Greenhouse/Lever devuelven TODAS las ofertas de la empresa (Adzuna sí
+/// admite filtrar por "where=", los otros dos providers no), así que este
+/// filtro corre después de fusionar los resultados de todos los providers,
+/// no en cada uno por separado.
 ///
 /// Ubicación vacía se acepta (muchas ofertas 100% remotas no listan
 /// ciudad): mejor un falso positivo ocasional que perder una oferta remota
@@ -49,12 +52,24 @@ internal static class LocationFilter
         "south africa", "morocco", "egypt",
         "australia", "sydney", "melbourne", "new zealand",
         "dubai", "abu dhabi", "saudi arabia", "qatar",
+        "u.s.",
+        // Remotos regionales que dejan fuera a España. Solo frases de región
+        // inequívocas: "Europe"/"EMEA" la incluyen y deben pasar, y un texto
+        // que además nombre España ya se ha aceptado antes ("Remote -
+        // Spain/LATAM").
+        "north america", "south america", "latin america", "central america",
+        "americas", "américas", "norteamérica", "norteamerica",
+        "latinoamérica", "latinoamerica", "américa latina", "america latina",
+        "sudamérica", "sudamerica", "asia pacific", "asia-pacific",
     ];
 
     // Marcadores demasiado cortos/ambiguos para Contains: "us" coincidiría
     // con "campus", "Austin", "business"...; "uk" con palabras que lo
-    // contengan como substring. Se comparan como palabra completa con regex.
-    private static readonly string[] NonSpainWholeWordMarkers = ["us", "uk"];
+    // contengan como substring; "apac" con "capacity". Se comparan como
+    // palabra completa con regex. "latam" y "noram" son siglas de regiones
+    // de América; "apac"/"apj", de Asia-Pacífico. "AMER" se deja fuera a
+    // propósito: Amer es también un municipio de Girona.
+    private static readonly string[] NonSpainWholeWordMarkers = ["us", "uk", "latam", "noram", "apac", "apj"];
 
     public static List<JobOffer> Apply(List<JobOffer> offers)
         => [.. offers.Where(o => IsSpainCompatible(o.Location))];

@@ -65,13 +65,28 @@ public sealed class UserProfile
     /// </summary>
     public string[] ExcludedAreas { get; init; } = [];
 
-    /// <summary>Prefiere cliente final frente a consultora.</summary>
+    /// <summary>
+    /// Prefiere cliente final frente a consultora. Con true, la puntuación
+    /// suma +20 a cliente final, resta -10 a consultora/agencia y deja 0 si no
+    /// se sabe. Con false (le da igual) ese componente vale siempre 0.
+    /// </summary>
     public bool PreferClientFinal { get; init; } = true;
 
-    /// <summary>Salario mínimo aceptable (EUR/año).</summary>
+    /// <summary>
+    /// Salario mínimo aceptable (EUR/año, bruto). Además de dar contexto a la
+    /// IA, es el límite duro de la puntuación por salario: una oferta cuyo
+    /// techo (SalaryMax) no llega a este mínimo resta, y ningún tramo que
+    /// premie queda por debajo de él.
+    /// </summary>
     public decimal MinAcceptableSalary { get; init; } = 40000;
 
-    /// <summary>Salario objetivo (EUR/año).</summary>
+    /// <summary>
+    /// Salario objetivo (EUR/año, bruto). Centra los tramos de la puntuación
+    /// por salario: cuanto más supera el techo de la oferta a este objetivo,
+    /// más suma. Si se configura por debajo de
+    /// <see cref="MinAcceptableSalary"/>, la puntuación lo trata como igual al
+    /// mínimo.
+    /// </summary>
     public decimal TargetSalary { get; init; } = 55000;
 
     /// <summary>

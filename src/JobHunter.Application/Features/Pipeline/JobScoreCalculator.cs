@@ -24,8 +24,16 @@ namespace JobHunter.Application.Features.Pipeline;
 ///    garantiza hundirla: el resto de términos puede compensarla). Aquí se
 ///    mantiene la penalización como valor por defecto defensivo para quien
 ///    puntúe sin pasar por ese filtro.
-///  - Cliente final +20 / consultora -10 / no se sabe 0.
-///  - Salario (SalaryMax): ≥70k +25, ≥60k +20, ≥50k +15, ≥40k +5, &lt;40k -10, null -5.
+///  - Cliente final +20 / consultora -10 / no se sabe 0, solo si el perfil lo
+///    prefiere (<see cref="UserProfile.PreferClientFinal"/>); si al candidato
+///    le da igual, cuenta 0 siempre.
+///  - Salario (SalaryMax), en tramos relativos al perfil (Min =
+///    <see cref="UserProfile.MinAcceptableSalary"/>, Objetivo =
+///    <see cref="UserProfile.TargetSalary"/>): ≥ Objetivo+15k +25,
+///    ≥ Objetivo+5k +20, ≥ Objetivo-5k +15 (nunca por debajo de Min),
+///    ≥ Min +5, &lt; Min -10, null -5. Un Objetivo por debajo de Min se
+///    trata como Min. Con el perfil por defecto (40k/55k) son los tramos
+///    fijos de siempre: ≥70k, ≥60k, ≥50k, ≥40k.
 ///  - Techs conocidas: cada tech del perfil (TechWeights, escala 0-10) que
 ///    aparezca en la oferta suma su peso; el total se capa en +40.
 ///  - Techs excluidas (frontend/otros lenguajes): -12 por cada una distinta
@@ -42,16 +50,18 @@ internal static class JobScoreCalculator
     /// <summary>Tope de la suma de pesos de techs conocidas (~4 techs fuertes).</summary>
     private const int TechMatchCap = 40;
 
+    // Márgenes (EUR/año) de los tramos de salario alrededor del objetivo del
+    // perfil. Están elegidos para que el perfil por defecto (mínimo 40k,
+    // objetivo 55k) puntúe exactamente igual que los antiguos tramos fijos.
+    private const decimal WellAboveTargetMargin = 15000;
+    private const decimal AboveTargetMargin = 5000;
+    private const decimal NearTargetMargin = 5000;
+
     public static JobScore Calculate(JobOffer offer, AiAnalysisResult analysis, UserProfile profile)
     {
         var remote = LocationScore(offer, profile);
-        var clientFinal = offer.IsClientFinal switch
-        {
-            true => 20,
-            false => -10,
-            null => 0, // ni la fuente ni la IA lo saben: neutro
-        };
-        var salary = SalaryScore(offer.SalaryMax);
+        var clientFinal = ClientFinalScore(offer.IsClientFinal, profile);
+        var salary = SalaryScore(offer.SalaryMax, profile);
         var tech = TechScore(offer, analysis, profile);
         var infoQuality = InfoQualityScore(offer);
         var total = (analysis.Compatibility / 2) + remote + clientFinal + salary + tech + infoQuality;
@@ -84,15 +94,59 @@ internal static class JobScoreCalculator
         _ => 0,
     };
 
-    private static int SalaryScore(decimal? salaryMax) => salaryMax switch
+    private static int ClientFinalScore(bool? isClientFinal, UserProfile profile)
     {
-        null => -5,
-        >= 70000 => 25,
-        >= 60000 => 20,
-        >= 50000 => 15,
-        >= 40000 => 5,
-        _ => -10,
-    };
+        // Si al candidato le da igual cliente final o consultora, el dato no
+        // debe mover la puntuación en ningún sentido: ni premio ni castigo.
+        if (!profile.PreferClientFinal)
+        {
+            return 0;
+        }
+
+        return isClientFinal switch
+        {
+            true => 20,
+            false => -10,
+            null => 0, // ni la fuente ni la IA lo saben: neutro
+        };
+    }
+
+    /// <summary>
+    /// Puntuación del salario relativa al perfil del candidato. Se mira
+    /// SalaryMax porque en una horquilla el techo es lo que la empresa está
+    /// dispuesta a pagar al perfil que busca (el suelo suele ser para alguien
+    /// más junior), y es lo que dice si la oferta puede llegar al objetivo.
+    /// Sin dato, -5: penaliza poco, porque muchas buenas ofertas no publican
+    /// salario, pero queda por debajo de las que sí lo hacen y encajan. Una
+    /// oferta que solo da suelo ("desde 35.000 €") cuenta como sin dato: su
+    /// techo es desconocido.
+    /// </summary>
+    private static int SalaryScore(decimal? salaryMax, UserProfile profile)
+    {
+        if (salaryMax is not { } salary)
+        {
+            return -5;
+        }
+
+        // Defensa ante un perfil mal configurado (objetivo por debajo del
+        // mínimo): el mínimo aceptable es el límite duro, así que el objetivo
+        // se sube hasta él. Por la misma razón el tramo "cerca del objetivo"
+        // nunca baja del mínimo: con un objetivo pegado al mínimo (p. ej.
+        // 40k/42k), Objetivo-5k caería por debajo y premiaría (+15) ofertas
+        // que el candidato no aceptaría.
+        var minimum = profile.MinAcceptableSalary;
+        var target = Math.Max(profile.TargetSalary, minimum);
+        var nearTarget = Math.Max(target - NearTargetMargin, minimum);
+
+        return salary switch
+        {
+            _ when salary >= target + WellAboveTargetMargin => 25,
+            _ when salary >= target + AboveTargetMargin => 20,
+            _ when salary >= nearTarget => 15,
+            _ when salary >= minimum => 5,
+            _ => -10,
+        };
+    }
 
     private static int TechScore(JobOffer offer, AiAnalysisResult analysis, UserProfile profile)
     {

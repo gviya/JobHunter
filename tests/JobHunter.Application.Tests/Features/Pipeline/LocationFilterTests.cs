@@ -56,4 +56,46 @@ public sealed class LocationFilterTests
     {
         LocationFilter.IsSpainCompatible("Anywhere; Armenia; Georgia; Latvia; Moldova").Should().BeFalse();
     }
+
+    [Theory]
+    [InlineData("Remote - LATAM")]
+    [InlineData("Remote (LatAm)")]
+    [InlineData("Remote (Americas)")]
+    [InlineData("Remote, US only")]
+    [InlineData("Remote (U.S.)")]
+    [InlineData("North America")]
+    [InlineData("Remote - North America")]
+    [InlineData("APAC")]
+    [InlineData("Remote - APAC")]
+    [InlineData("Remote - Asia Pacific")]
+    [InlineData("Remote - Latin America")]
+    [InlineData("Remote - South America")]
+    [InlineData("Remoto - Latinoamérica")]
+    [InlineData("Remoto (América Latina)")]
+    [InlineData("Remote (Canada/US)")]
+    [InlineData("Remote - NORAM")]
+    public void IsSpainCompatible_RemotoRegionalQueExcluyeEspana_Rechaza(string location)
+    {
+        // Regresión: los remotos acotados a una región sin España (LATAM,
+        // Americas, APAC...) pasaban porque ningún marcador nombraba la
+        // región. Los de EEUU/Canadá ya se rechazaban; se fijan aquí para que
+        // los nuevos marcadores no los rompan.
+        LocationFilter.IsSpainCompatible(location).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("Remote - EMEA")]
+    [InlineData("Remote (EMEA)")]
+    [InlineData("Europe")]
+    [InlineData("Remote - Europe")]
+    [InlineData("Remote - Spain/EMEA")]
+    [InlineData("Remote - Spain/LATAM")]
+    [InlineData("Amer, Girona")]
+    public void IsSpainCompatible_RegionConEspanaOUbicacionEspanola_Acepta(string location)
+    {
+        // EMEA y Europa incluyen España, y nombrar España gana a cualquier
+        // región ajena del mismo texto. "Amer" es un municipio de Girona: por
+        // eso la sigla AMER no es marcador.
+        LocationFilter.IsSpainCompatible(location).Should().BeTrue();
+    }
 }

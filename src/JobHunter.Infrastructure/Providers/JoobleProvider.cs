@@ -84,7 +84,11 @@ public sealed class JoobleProvider(
     {
         var description = HtmlText.ToPlainText(r.Snippet);
 
-        // TODO: parsear salary string de Jooble ("30.000 € - 40.000 €") a SalaryMin/SalaryMax.
+        // El salario llega como texto libre ("30.000 € - 40.000 €"). SalaryText
+        // solo lo convierte si es anual, en EUR y sin ambigüedad; si no, queda
+        // sin salario: uno mal leído distorsionaría la puntuación.
+        var salary = SalaryText.Parse(r.Salary);
+
         return new JobOffer
         {
             ExternalId = id,
@@ -95,6 +99,8 @@ public sealed class JoobleProvider(
             Description = description,
             DescriptionIsSnippet = true,
             Location = r.Location,
+            SalaryMin = salary?.Min,
+            SalaryMax = salary?.Max,
             WorkMode = WorkModeHeuristics.FromText(title: r.Title, location: r.Location, description: description, extra: r.Type),
             PublishedAt = r.Updated ?? DateTime.UtcNow,
         };
