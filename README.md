@@ -22,7 +22,7 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
 ## Qué hace el pipeline diario
 
 1. **Busca** en paralelo en todas las fuentes activas (Adzuna, Greenhouse,
-   Lever, JSearch, Jooble — InfoJobs pendiente de OAuth2) con las keywords
+   Lever, JSearch, Jooble — InfoJobs pendiente de implementar) con las keywords
    del perfil. Greenhouse y Lever devuelven el board completo de la empresa,
    así que sus ofertas pasan antes un filtro por título (rol técnico, techs
    del perfil o términos de las keywords) para no analizar puestos de
@@ -80,8 +80,9 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
 │   ├── JobHunter.Infrastructure/   # EF Core+SQLite, providers HTTP, Claude, Ollama, MailKit, Hangfire job
 │   └── JobHunter.Api/              # Composition root, endpoints mínimos, Program.cs
 ├── tests/
-│   ├── JobHunter.Application.Tests/    # Scoring (JobScoreCalculator)
-│   ├── JobHunter.Infrastructure.Tests/ # Persistencia SQLite, cosine similarity, deserialización Adzuna
+│   ├── JobHunter.Application.Tests/    # Pipeline completo con dependencias simuladas, puntuación, filtros, dedup, informe
+│   ├── JobHunter.Infrastructure.Tests/ # Providers (HTTP simulado), heurística de modo de trabajo, HtmlText, prompt de IA, persistencia y migraciones SQLite
+│   ├── JobHunter.Api.Tests/            # Autorización de endpoints y dashboard
 │   └── JobHunter.Architecture.Tests/   # ArchUnitNET: reglas de capas vigiladas
 ├── Directory.Packages.props   # Central Package Management: versiones NuGet
 ├── Directory.Build.props      # TargetFramework, Nullable, etc. comunes a todos los proyectos
@@ -94,7 +95,7 @@ scheduler y SQLite como almacenamiento — sin infraestructura externa.
 **Patrones** — Clean Architecture, CQRS (MediatR), Repository, Options, pipeline behaviors (logging/performance/validation)
 **Persistencia** — EF Core 10 + SQLite (migraciones en `Infrastructure/Persistence/Migrations`)
 **Scheduler** — Hangfire (storage SQLite), dashboard en `/hangfire`
-**Fuentes de empleo** — Adzuna (API REST), Greenhouse y Lever (boards públicos de empresas objetivo)
+**Fuentes de empleo** — Adzuna, JSearch (Google for Jobs) y Jooble (APIs REST), Greenhouse y Lever (boards públicos de empresas objetivo)
 **IA** — Claude Haiku vía HttpClient puro contra la Messages API de Anthropic; embeddings vía Ollama local
 **Email** — MailKit (SMTP)
 **Tests** — xUnit · AwesomeAssertions · ArchUnitNET
@@ -115,9 +116,10 @@ dotnet user-secrets set "Email:From" "..." --project src/JobHunter.Api
 dotnet user-secrets set "Email:To" "..." --project src/JobHunter.Api
 ```
 
-Secciones configurables: `Anthropic`, `Adzuna`, `InfoJobs` (sin implementar
-todavía), `TargetCompanies:{Greenhouse,Lever}` (board tokens, no son
-secretos), `Ollama`, `Email`, `Schedule:CronExpression`.
+Secciones configurables: `Ai:Provider` (`Claude` u `Ollama`), `Anthropic`,
+`Adzuna`, `JSearch`, `Jooble`, `InfoJobs` (sin implementar todavía),
+`TargetCompanies:{Greenhouse,Lever}` (board tokens, no son secretos),
+`Ollama`, `Email`, `Schedule:CronExpression`.
 
 ### Seguridad de los endpoints
 
@@ -210,7 +212,11 @@ dotnet test
 
 ## Fuera de alcance (pendiente)
 
-- `InfoJobsProvider` — esqueleto sin implementar (falta el flujo OAuth2).
+- `InfoJobsProvider` — esqueleto sin implementar. Para buscar ofertas no
+  hace falta OAuth2 (eso es solo para datos de usuario): basta la
+  autenticación de aplicación, HTTP Basic con `ClientId:ClientSecret`,
+  contra `GET https://api.infojobs.net/api/9/offer` (credenciales en
+  developer.infojobs.net).
 - Scraping con Playwright (Tecnoempleo, WTTJ).
 - Empaquetado Docker / despliegue.
 
