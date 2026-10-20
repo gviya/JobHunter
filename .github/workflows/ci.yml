@@ -1,0 +1,97 @@
+# ==================================================================
+# ci.yml — Integración continua con GitHub Actions.
+#
+# ¿QUÉ ES?
+# El workflow que GitHub ejecuta en cada push a main y en cada pull
+# request: restaura, compila en Release, comprueba que no falta
+# ninguna migración de EF Core y pasa TODA la batería de tests.
+#
+# ¿POR QUÉ EXISTE?
+# - Un PR que no compila, rompe un test o cambia el modelo sin su
+#   migración queda en rojo ANTES de llegar a main.
+# - Compila con el SDK que fija global.json (no con el que tenga cada
+#   máquina), así que también verifica el build con el SDK real.
+#
+# PIEZAS:
+# - permissions: mínimo privilegio. El token del workflow solo puede
+#   LEER el repo; ningún paso necesita escribir (ni comentar PRs).
+# - concurrency: un push nuevo a la misma rama/PR cancela la ejecución
+#   anterior, que ya está obsoleta (ahorra minutos y colas).
+# - setup-dotnet + global-json-file: instala el SDK de global.json. Con
+#   rollForward "latestFeature" la acción instala el último 10.0.x, que
+#   cumple el mínimo fijado (10.0.301).
+# - restore / build / test: el build va en Release y los tests reutilizan
+#   ese mismo build (--no-build), igual que se ejecutaría en producción.
+# - migraciones: "has-pending-model-changes" sale con código 1 si el
+#   modelo de EF difiere del último snapshot, es decir, si alguien cambió
+#   una entidad o configuración y olvidó "dotnet ef migrations add".
+#   dotnet-ef sale del manifiesto dotnet-tools.json (versión fijada).
+# - artefacto: si algo falla se suben los .trx para ver qué test cayó
+#   sin tener que reproducirlo en local.
+# ==================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Permite lanzarlo a mano desde la pestaña Actions.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Sin banner de bienvenida ni telemetría del CLI en los logs de CI.
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-and-test:
+    name: Build, migraciones y tests
+    runs-on: ubuntu-latest
+    # Red de seguridad: un test colgado no consume horas de runner.
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar el SDK de .NET (global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restaurar paquetes NuGet
+        run: dotnet restore
+
+      - name: Compilar (Release)
+        run: dotnet build --no-restore -c Release
+
+      # Va antes que los tests: tarda segundos y avisa pronto. Reutiliza el
+      # build Release (--no-build) en lugar de recompilar en Debug.
+      - name: Comprobar que no falta ninguna migración de EF Core
+        run: |
+          dotnet tool restore
+          dotnet ef migrations has-pending-model-changes \
+            --project src/JobHunter.Infrastructure \
+            --startup-project src/JobHunter.Api \
+            --configuration Release \
+            --no-build
+
+      - name: Tests
+        run: dotnet test --no-build -c Release --logger trx --results-directory TestResults
+
+      - name: Subir resultados de tests (solo si algo falla)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          # Si falló un paso anterior a los tests no hay .trx: no es un error.
+          if-no-files-found: ignore
+          retention-days: 7
